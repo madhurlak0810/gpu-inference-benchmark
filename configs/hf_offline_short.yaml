@@ -1,0 +1,5 @@
+# Day 1 baseline: Hugging Face generate(), ~128 tokens in, 128 out.
+extends: _base.yaml
+mode: offline
+backend: hf
+batch_sizes: [1, 8, 32, 64]

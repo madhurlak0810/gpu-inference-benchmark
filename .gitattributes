@@ -1,0 +1,4 @@
+# Written on Windows, run on Linux: keep one line ending so prompt files and
+# CSVs are byte-identical on both.
+* text=auto eol=lf
+*.png binary

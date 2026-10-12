@@ -1,0 +1,3 @@
+# hf_offline_short with the second model size.
+extends: hf_offline_short.yaml
+model: Qwen/Qwen2.5-1.5B-Instruct

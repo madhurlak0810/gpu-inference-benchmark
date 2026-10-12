@@ -1,0 +1,12 @@
+# Day 2 baseline: vLLM's OpenAI-compatible server under 1 to 64 concurrent users.
+extends: _base.yaml
+mode: online
+backend: vllm
+concurrency: [1, 4, 16, 64]
+num_requests: 128         # per concurrency level, per repeat
+
+server:
+  launch: true            # false = benchmark a server that is already running
+  host: 127.0.0.1
+  port: 8000
+  startup_timeout_s: 600

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# --smoke runs and server logs are scratch, not reported numbers
+results/_smoke/
+results/*/server.log

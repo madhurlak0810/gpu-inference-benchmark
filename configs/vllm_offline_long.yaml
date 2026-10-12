@@ -1,0 +1,3 @@
+# hf_offline_long with the backend swapped to vLLM's LLM.generate().
+extends: hf_offline_long.yaml
+backend: vllm

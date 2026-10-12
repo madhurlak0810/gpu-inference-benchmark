@@ -1,0 +1,25 @@
+# Baseline shared by every experiment. Other configs `extends` this (directly
+# or through another config) and state only what they change.
+model: Qwen/Qwen2.5-0.5B-Instruct
+dtype: float16            # the T4 has no bf16
+seed: 0
+gpu_index: 0              # Kaggle hands out two T4s; the benchmark uses one
+
+prompts:
+  file: data/prompts_short.jsonl
+  input_tokens: 128
+  num_prompts: 64
+max_new_tokens: 128       # every request is forced to generate exactly this many
+
+warmup_batches: 3         # untimed, before each setting
+repeats: 3
+max_spread: 0.10          # std / mean of throughput above this flags a rerun
+monitor_interval_s: 0.5
+
+# vLLM engine arguments, passed to LLM(...) offline and to the server online.
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 2048
+  # On by default in vLLM. Off here because warm-ups and repeats resend the
+  # same prompts, and a cache hit would skip work Hugging Face has to do.
+  enable_prefix_caching: false

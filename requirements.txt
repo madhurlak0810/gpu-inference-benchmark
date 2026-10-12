@@ -1,0 +1,13 @@
+# Target: Kaggle T4 session (Linux, Python 3.11 or 3.12).
+# vLLM is Linux-only and pins its own torch (2.13.0 for this release).
+vllm==0.31.0 ; sys_platform == "linux"
+transformers==5.17.0
+pandas==3.0.6
+matplotlib==3.11.2
+PyYAML==6.0.3
+httpx==0.28.1
+nvidia-ml-py==13.615.71
+
+# Elsewhere only the Hugging Face path runs. For a CUDA build on Windows:
+#   pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu130
+torch==2.13.0 ; sys_platform != "linux"

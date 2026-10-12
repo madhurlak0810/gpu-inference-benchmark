@@ -1,0 +1,6 @@
+# hf_offline_short with long prompts: ~1,024 tokens in, 256 out.
+extends: hf_offline_short.yaml
+prompts:
+  file: data/prompts_long.jsonl
+  input_tokens: 1024
+max_new_tokens: 256
