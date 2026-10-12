@@ -72,7 +72,10 @@ def main() -> None:
         _check_resumable(store.dir, cfg, env)
     if args.redo_noisy:
         noisy = store.noisy(cfg["max_spread"])
-        print(f"[{cfg['name']}] rerunning {store.key} in {noisy}" if noisy else f"[{cfg['name']}] nothing is noisy")
+        if not noisy:
+            print(f"[{cfg['name']}] nothing is noisy")
+            return  # before the model loads
+        print(f"[{cfg['name']}] rerunning {store.key} in {noisy}")
         store.drop(noisy)
 
     (store.dir / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")

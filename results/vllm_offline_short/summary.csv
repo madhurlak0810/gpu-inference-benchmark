@@ -1,0 +1,13 @@
+run,mode,backend,model,dtype,input_tokens,max_new_tokens,batch_size,repeat,num_prompts,generated_tokens,wall_s,throughput_tok_s,latency_p50_ms,latency_p95_ms,latency_p99_ms,peak_mem_gb,mean_util_pct,peak_torch_alloc_gb,status,finished_at
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,1,0,64,8192,47.55,172.28,741.982,755.814,756.858,13.46,99.1,,ok,2026-10-12T01:45:21+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,1,1,64,8192,49.5308,165.39,774.392,786.609,787.855,13.46,99.3,,ok,2026-10-12T01:46:10+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,1,2,64,8192,49.3104,166.13,769.026,778.04,780.394,13.46,99.2,,ok,2026-10-12T01:46:59+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,8,0,64,8192,7.2318,1132.77,903.933,907.803,907.803,13.478,98.5,,ok,2026-10-12T01:47:09+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,8,1,64,8192,7.2557,1129.04,907.892,909.435,909.435,13.478,98.6,,ok,2026-10-12T01:47:17+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,8,2,64,8192,7.2554,1129.09,905.926,911.318,911.318,13.478,98.7,,ok,2026-10-12T01:47:24+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,32,0,64,8192,3.0074,2723.93,1503.692,1511.389,1511.389,13.63,100.0,,ok,2026-10-12T01:47:31+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,32,1,64,8192,3.0057,2725.45,1502.855,1503.949,1503.949,13.63,100.0,,ok,2026-10-12T01:47:34+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,32,2,64,8192,3.0078,2723.56,1503.898,1507.724,1507.724,13.63,100.0,,ok,2026-10-12T01:47:37+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,64,0,64,8192,2.1847,3749.77,2184.648,2184.648,2184.648,13.898,100.0,,ok,2026-10-12T01:47:46+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,64,1,64,8192,2.1775,3762.09,2177.493,2177.493,2177.493,13.898,100.0,,ok,2026-10-12T01:47:48+00:00
+vllm_offline_short,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,64,2,64,8192,2.1822,3754.04,2182.167,2182.167,2182.167,13.898,100.0,,ok,2026-10-12T01:47:51+00:00

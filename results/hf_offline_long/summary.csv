@@ -1,0 +1,13 @@
+run,mode,backend,model,dtype,input_tokens,max_new_tokens,batch_size,repeat,num_prompts,generated_tokens,wall_s,throughput_tok_s,latency_p50_ms,latency_p95_ms,latency_p99_ms,peak_mem_gb,mean_util_pct,peak_torch_alloc_gb,status,finished_at
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,1,0,64,16384,512.5235,31.97,8005.452,8084.043,8125.614,1.72,37.8,1.097,ok,2026-10-12T02:32:41+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,1,1,64,16384,511.7149,32.02,8000.642,8089.6,8111.972,1.72,38.2,1.097,ok,2026-10-12T02:41:13+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,1,2,64,16384,508.3786,32.23,7943.797,8003.87,8022.639,1.72,38.2,1.097,ok,2026-10-12T02:49:41+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,8,0,64,16384,79.4659,206.18,9932.662,9967.896,9967.896,2.9,96.1,2.192,ok,2026-10-12T02:51:31+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,8,1,64,16384,79.4056,206.33,9922.533,9950.165,9950.165,2.9,96.1,2.192,ok,2026-10-12T02:52:50+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,8,2,64,16384,79.4365,206.25,9929.248,9934.456,9934.456,2.9,96.2,2.192,ok,2026-10-12T02:54:10+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,32,0,64,16384,63.9573,256.17,31978.641,31981.434,31981.434,6.849,98.9,5.949,ok,2026-10-12T02:56:50+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,32,1,64,16384,63.935,256.26,31967.472,31975.445,31975.445,6.849,98.8,5.949,ok,2026-10-12T02:57:54+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,32,2,64,16384,63.9592,256.16,31979.582,31981.59,31981.59,6.849,99.1,5.949,ok,2026-10-12T02:58:58+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,64,0,64,16384,61.3665,266.99,61366.493,61366.493,61366.493,12.124,99.2,10.958,ok,2026-10-12T03:03:03+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,64,1,64,16384,61.3675,266.98,61367.456,61367.456,61367.456,12.124,99.2,10.958,ok,2026-10-12T03:04:05+00:00
+hf_offline_long,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,1024,256,64,2,64,16384,61.3747,266.95,61374.729,61374.729,61374.729,12.124,99.2,10.958,ok,2026-10-12T03:05:06+00:00

@@ -1,0 +1,25 @@
+model: Qwen/Qwen2.5-0.5B-Instruct
+dtype: float16
+seed: 0
+gpu_index: 0
+prompts:
+  file: data/prompts_long.jsonl
+  input_tokens: 1024
+  num_prompts: 64
+max_new_tokens: 256
+warmup_batches: 3
+repeats: 3
+max_spread: 0.1
+monitor_interval_s: 0.5
+vllm:
+  gpu_memory_utilization: 0.9
+  max_model_len: 2048
+  enable_prefix_caching: false
+mode: offline
+backend: hf
+batch_sizes:
+- 1
+- 8
+- 32
+- 64
+name: hf_offline_long

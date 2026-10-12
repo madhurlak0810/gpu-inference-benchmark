@@ -1,4 +1,5 @@
-# Target: Kaggle T4 session (Linux, Python 3.11 or 3.12).
+# Target: Kaggle T4 session (Linux). Measured there on Python 3.13;
+# requirements.lock.txt has the full resolved environment.
 # vLLM is Linux-only and pins its own torch (2.13.0 for this release).
 vllm==0.31.0 ; sys_platform == "linux"
 transformers==5.17.0

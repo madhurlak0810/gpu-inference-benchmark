@@ -1,0 +1,13 @@
+run,mode,backend,model,dtype,input_tokens,max_new_tokens,batch_size,repeat,num_prompts,generated_tokens,wall_s,throughput_tok_s,latency_p50_ms,latency_p95_ms,latency_p99_ms,peak_mem_gb,mean_util_pct,peak_torch_alloc_gb,status,finished_at
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,1,0,64,8192,246.1992,33.27,3844.08,3903.547,3932.67,1.564,38.6,0.943,ok,2026-10-12T02:12:14+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,1,1,64,8192,246.572,33.22,3852.1,3904.576,3913.207,1.564,38.7,0.943,ok,2026-10-12T02:16:20+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,1,2,64,8192,247.1545,33.15,3865.08,3908.789,3937.382,1.564,38.6,0.943,ok,2026-10-12T02:20:28+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,8,0,64,8192,31.7105,258.34,3969.38,4001.635,4001.635,1.626,40.5,0.987,ok,2026-10-12T02:21:11+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,8,1,64,8192,31.6269,259.02,3951.739,3977.958,3977.958,1.626,40.8,0.987,ok,2026-10-12T02:21:43+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,8,2,64,8192,31.7487,258.03,3974.186,4000.263,4000.263,1.626,41.6,0.987,ok,2026-10-12T02:22:15+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,32,0,64,8192,8.5462,958.56,4273.078,4274.753,4274.753,1.888,85.8,1.138,ok,2026-10-12T02:22:37+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,32,1,64,8192,8.5682,956.1,4284.07,4312.527,4312.527,1.888,84.5,1.138,ok,2026-10-12T02:22:45+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,32,2,64,8192,8.5435,958.86,4271.719,4290.573,4290.573,1.888,86.2,1.138,ok,2026-10-12T02:22:54+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,64,0,64,8192,6.405,1279.0,6404.99,6404.99,6404.99,2.138,97.7,1.341,ok,2026-10-12T02:23:19+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,64,1,64,8192,6.4312,1273.8,6431.133,6431.133,6431.133,2.138,97.5,1.341,ok,2026-10-12T02:23:26+00:00
+hf_offline_short,offline,hf,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,64,2,64,8192,6.4448,1271.09,6444.804,6444.804,6444.804,2.138,97.2,1.341,ok,2026-10-12T02:23:32+00:00
