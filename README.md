@@ -6,8 +6,9 @@ and vLLM on one NVIDIA T4, across batch sizes and 1 to 64 concurrent users.
 Every reported number comes from a CSV under `results/` and one command
 reproduces it.
 
-> **Status:** the baseline measurements below are complete. The optimization
-> experiments are set up but not yet measured: see
+> **Status:** the baseline measurements below are complete. Of the
+> optimization experiments, E4 (CUDA graphs against eager) is measured; E3, E1
+> and E2 are set up but not yet run. See
 > [Optimization experiments](#optimization-experiments) for the plan and its
 > checkpoints.
 
@@ -97,9 +98,10 @@ token, Hugging Face leaves the GPU idle at small batches, and memory caps
 concurrency. Each experiment below changes one setting against a control run
 measured in the same session, and is judged on the metric its hypothesis names.
 
-**Nothing in this section has been measured on the T4 yet.** The harness
-changes were checked end to end against a local mock server; every result
-table is a placeholder until its run lands.
+**Only E4 has been measured on the T4 so far.** The online harness changes
+(open-loop load, pinning, `/metrics` scraping) were checked end to end against
+a local mock server but have not yet run against vLLM; the result tables of
+E3, E1 and E2 are placeholders until their runs land.
 
 ### Checkpoints
 
@@ -118,8 +120,9 @@ Harness (shared by every experiment):
 - [x] `python -m analysis.compare <experiment>`: each run against its control,
       with the noise-floor rule applied
 - [x] `scripts/kaggle_job.py`: start a run on a Kaggle T4 and fetch its results
-- [ ] `--smoke` of one config of each experiment on the T4 (confirms the vLLM
-      0.31.0 flag names, the `/metrics` gauge names and `taskset` pinning)
+- [x] `--smoke` of E4 on the T4 (all five configs)
+- [ ] `--smoke` of E3, E1 and E2 on the T4 (confirms the vLLM 0.31.0 flag
+      names, the `/metrics` gauge names and `taskset` pinning)
 - [ ] `e1_control` at 16 and 64 users reproduces the `vllm_online` baseline
       (1,802 and 3,629 tokens/s) with pinning and scraping on
 
@@ -127,7 +130,7 @@ Experiments, in the order they will run:
 
 | # | Experiment | Setup | Smoke on T4 | Measured | Written up |
 | --- | --- | :---: | :---: | :---: | :---: |
-| E4 | CUDA graphs against eager | ✅ | ☐ | ☐ | ☐ |
+| E4 | CUDA graphs against eager | ✅ | ✅ | ✅ | ✅ |
 | E3 | Prefix caching | ✅ | ☐ | ☐ | ☐ |
 | E1 | Scheduler limits | ✅ | ☐ | ☐ | ☐ |
 | E2 | Chunked prefill | ✅ | ☐ | ☐ | ☐ |
@@ -168,7 +171,47 @@ and `torch.compile` should close part of the gap from the Hugging Face side.
 
 **Primary metrics.** Tokens/s and GPU utilization at batch 1.
 
-**Results.** _Pending: `python -m analysis.compare e4`._
+**Results.** Printed by `python -m analysis.compare e4`: mean ± standard
+deviation over 3 repeats, with the change from the run's control in brackets.
+Every change shown is beyond the noise floor.
+
+| Batch | Run | Throughput (tok/s) | GPU utilization (%) | p95 latency (ms) |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | `e4_hf_control` | 34 ± 0 | 38 ± 0 | 3,833 ± 19 |
+| 1 | `e4_hf_static` | 37 ± 0 (+9%) | 38 ± 0 | 3,544 ± 9 (−8%) |
+| 1 | `e4_hf_compiled` | 120 ± 1 (+254%) | 81 ± 0 (+111%) | 1,083 ± 18 (−72%) |
+| 1 | `e4_vllm_control` | 163 ± 4 | 99 ± 0 | 813 ± 35 |
+| 1 | `e4_vllm_eager` | 40 ± 0 (−76%) | 32 ± 0 (−67%) | 3,305 ± 5 (+307%) |
+| 8 | `e4_hf_control` | 263 ± 0 | 42 ± 0 | 3,944 ± 26 |
+| 8 | `e4_hf_static` | 290 ± 2 (+11%) | 39 ± 0 (−7%) | 3,551 ± 38 (−10%) |
+| 8 | `e4_hf_compiled` | 788 ± 3 (+200%) | 86 ± 1 (+103%) | 1,307 ± 7 (−67%) |
+| 8 | `e4_vllm_control` | 1,133 ± 3 | 99 ± 0 | 906 ± 1 |
+| 8 | `e4_vllm_eager` | 313 ± 2 (−72%) | 31 ± 0 (−68%) | 3,312 ± 38 (+266%) |
+
+- **The hypothesis held.** Without graph capture and compilation, vLLM ran at
+  40 tokens/s at batch 1, 1.2× Hugging Face's 34, against 4.8× with them on.
+  Its GPU utilization fell from 99% to 32%, below Hugging Face's 38%.
+- **Compiling closed most of the gap from the Hugging Face side.**
+  `generate()` with a static cache and `torch.compile` reached 120 tokens/s at
+  batch 1, 3.5× its control and 73% of vLLM, with the GPU 81% busy. At batch 8
+  it reached 788 tokens/s, 70% of vLLM.
+- **The static cache alone gave 9% to 11%.** It left GPU utilization where it
+  was; the gain came with compilation.
+- **What `enforce_eager` turns off.** In vLLM 0.31.0 the flag disables
+  `torch.compile` and kernel warm-up as well as CUDA graphs, so this run
+  measures the three together and cannot credit CUDA graphs alone.
+- **Outputs were not all identical.** Each run produced the same tokens on
+  every repeat, but against its control a few batches differed: 2 of the 36
+  distinct batches for each Hugging Face run and 3 of 36 for eager vLLM (102
+  and 99 of 108 batch fingerprints matched). The likely cause is fp16
+  near-ties in greedy decoding resolving differently on a different compute
+  path; that has not been confirmed by inspecting the tokens, since only
+  fingerprints were recorded.
+
+The controls match the baseline (34 against 33 tokens/s for Hugging Face at
+batch 1, 163 against 168 for vLLM) on 32 prompts instead of 64. The run took
+31 minutes on the T4 at commit `5a658eb`; compilation fell in the untimed
+warm-up and is not in these figures.
 
 ### E3: Prefix caching
 

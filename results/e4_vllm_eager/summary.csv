@@ -1,0 +1,7 @@
+run,mode,backend,model,dtype,input_tokens,max_new_tokens,batch_size,repeat,num_prompts,generated_tokens,wall_s,throughput_tok_s,latency_p50_ms,latency_p95_ms,latency_p99_ms,peak_mem_gb,mean_util_pct,peak_torch_alloc_gb,status,finished_at
+e4_vllm_eager,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,1,0,32,4096,103.3811,39.62,3231.882,3302.959,3332.857,13.392,32.3,,ok,2026-10-13T05:46:15+00:00
+e4_vllm_eager,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,1,1,32,4096,103.3436,39.63,3224.628,3310.978,3339.589,13.392,32.2,,ok,2026-10-13T05:47:58+00:00
+e4_vllm_eager,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,1,2,32,4096,103.1297,39.72,3225.955,3302.398,3352.343,13.392,32.4,,ok,2026-10-13T05:49:41+00:00
+e4_vllm_eager,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,8,0,32,4096,13.0554,313.74,3271.5,3277.262,3277.262,13.409,31.3,,ok,2026-10-13T05:50:05+00:00
+e4_vllm_eager,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,8,1,32,4096,13.0339,314.26,3251.728,3306.752,3306.752,13.409,31.6,,ok,2026-10-13T05:50:18+00:00
+e4_vllm_eager,offline,vllm,Qwen/Qwen2.5-0.5B-Instruct,float16,128,128,8,2,32,4096,13.2188,309.86,3305.906,3353.422,3353.422,13.409,31.0,,ok,2026-10-13T05:50:32+00:00
