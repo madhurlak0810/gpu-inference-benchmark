@@ -1,8 +1,9 @@
 """Regenerate every chart from results/: `python -m analysis.plots`.
 
-Each chart is a sweep (batch size or concurrent users) on a log-2 x axis, one
-panel per model and prompt setting, with the mean across repeats as the line
-and ± 1 standard deviation as the bars.
+Each baseline chart is a sweep (batch size or concurrent users) on a log-2 x
+axis, one panel per model and prompt setting, with the mean across repeats as
+the line and ± 1 standard deviation as the bars. Each optimization experiment
+gets bar charts instead: one bar per run, one panel per swept setting.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 
 from bench.config import REPO_ROOT
@@ -47,6 +49,25 @@ CHARTS = [
      "p95 time to first token (ms)", "ttft_vs_concurrency.png", ""),
 ]
 X_LABEL = {"offline": "Batch size", "online": "Concurrent users"}
+
+# Experiment bar charts: experiment, mode, metric, title, x label, file, note.
+EXPERIMENT_CHARTS = [
+    ("e4", "offline", "throughput_tok_s", "E4: throughput with and without compilation",
+     "Generated tokens per second", "e4_throughput.png",
+     "vLLM's eager mode turns off torch.compile and kernel warm-up as well as CUDA graphs."),
+    ("e4", "offline", "mean_util_pct", "E4: GPU utilization with and without compilation",
+     "Mean GPU utilization (%)", "e4_gpu_utilization.png", ""),
+]
+PANEL_LABEL = {"batch_size": "Batch size {}", "concurrency": "{} concurrent users",
+               "request_rate": "{} requests per second"}
+# Run -> bar label, in the order the bars are drawn.
+RUN_LABELS = {
+    "e4_hf_control": "Hugging Face generate()",
+    "e4_hf_static": "+ static KV cache",
+    "e4_hf_compiled": "+ static KV cache, torch.compile",
+    "e4_vllm_control": "vLLM",
+    "e4_vllm_eager": "vLLM, eager mode",
+}
 
 plt.rcParams.update({
     "font.family": "DejaVu Sans",  # ships with matplotlib, so charts match on every machine
@@ -153,6 +174,56 @@ def sweep_chart(agg, sweep: str, metric: str, series: str, title: str, y_label: 
     plt.close(fig)
 
 
+def bar_chart(agg, sweep: str, metric: str, title: str, x_label: str, subtitle: list[str], path: Path) -> None:
+    """One horizontal bar per run, colored by backend, one panel per swept setting."""
+    runs = [r for r in RUN_LABELS if r in set(agg["run"])]
+    settings = sorted(agg[sweep].unique())
+    backend_of = dict(zip(agg["run"], agg["backend"]))
+    shown = [BACKENDS[b] for b in BACKENDS if b in backend_of.values()]
+
+    width = 4.6 * len(settings) + 2.4
+    lines = [line for part in subtitle for line in textwrap.wrap(part, int(width * 11.5))]
+    legend_top = 0.58 + 0.18 * len(lines)
+    header = legend_top + (0.38 if len(shown) > 1 else 0.08)
+    height = 0.42 * len(runs) + 1.0 + header
+    fig, axes = plt.subplots(1, len(settings), figsize=(width, height), sharey=True, squeeze=False)
+
+    for ax, setting in zip(axes[0], settings):
+        rows = agg[agg[sweep] == setting].set_index("run").reindex(runs)
+        means, stds = rows[f"{metric}_mean"], rows[f"{metric}_std"].fillna(0)
+        ax.barh(range(len(runs)), means, height=0.62, xerr=stds, zorder=3,
+                color=[BACKENDS[backend_of[r]][1] for r in runs],
+                error_kw={"ecolor": INK_SECONDARY, "elinewidth": 1, "capsize": 0})
+        for y, (mean, std) in enumerate(zip(means, stds)):
+            ax.annotate(_value(mean), (mean + std, y), xytext=(6, 0), textcoords="offset points",
+                        va="center", fontsize=9, color=INK_SECONDARY)
+        ax.set_yticks(range(len(runs)), [RUN_LABELS[r] for r in runs], fontsize=9.5, color=INK_SECONDARY)
+        ax.set_xlim(0, means.max() * 1.18)
+        ax.xaxis.set_major_formatter(FuncFormatter(_compact))
+        ax.grid(axis="x", color=GRID, linewidth=0.8)
+        ax.set_axisbelow(True)
+        ax.tick_params(length=0)
+        for side in ("top", "right", "bottom"):
+            ax.spines[side].set_visible(False)
+        ax.spines["left"].set_color(AXIS)
+        ax.set_xlabel(x_label)
+        ax.set_title(PANEL_LABEL[sweep].format(setting), loc="left", fontsize=9.5, color=INK_SECONDARY, pad=8)
+
+    axes[0][0].invert_yaxis()  # shared axis: first run on top
+    fig.tight_layout(rect=(0, 0, 1, 1 - header / height), w_pad=3)
+    left = 0.02
+    fig.text(left, 1 - 0.2 / height, title, fontsize=13, fontweight="bold", color=INK, va="top")
+    fig.text(left, 1 - 0.54 / height, "\n".join(lines), fontsize=9, color=INK_SECONDARY,
+             va="top", linespacing=1.4)
+    if len(shown) > 1:
+        handles = [Patch(facecolor=color) for _, color in shown]
+        fig.legend(handles, [label for label, _ in shown], loc="upper left",
+                   bbox_to_anchor=(left - 0.008, 1 - legend_top / height), ncol=len(shown), frameon=False,
+                   fontsize=9, labelcolor=INK_SECONDARY, handlelength=1.2, columnspacing=1.8)
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Regenerate every chart from the committed CSVs.")
     ap.add_argument("--results-dir", default=str(REPO_ROOT / "results"))
@@ -175,6 +246,19 @@ def main() -> None:
         if note:
             subtitle.append(note)
         sweep_chart(agg, SWEEP[mode], metric, series, title, y_label, X_LABEL[mode], subtitle, out / filename)
+        print(f"wrote {out / filename}")
+
+    experiments = load(results_dir, experiments=True)
+    for experiment, mode, metric, title, x_label, filename, note in EXPERIMENT_CHARTS:
+        runs = experiments[experiments["run"].str.startswith(experiment + "_")] if not experiments.empty else experiments
+        agg = aggregate(runs, mode)
+        if agg.empty or f"{metric}_mean" not in agg:
+            print(f"skipped {filename}: no {experiment} results")
+            continue
+        subtitle = [f"{gpu}, Qwen2.5-0.5B, 128 tokens in and out. Mean across repeats; bars show ± 1 standard deviation."]
+        if note:
+            subtitle.append(note)
+        bar_chart(agg, SWEEP[mode], metric, title, x_label, subtitle, out / filename)
         print(f"wrote {out / filename}")
 
 

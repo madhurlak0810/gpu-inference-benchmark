@@ -35,6 +35,13 @@ setting was 2.3%.
   tokens: p95 time to first token went from 23 to 517 ms, inter-token latency
   from 5.9 to 15.0 ms.
 
+- **Compilation explains the small-batch gap** (optimization experiment E4).
+  With `torch.compile` and CUDA graphs turned off, vLLM ran at 40 tokens/s at
+  batch 1, 1.2× Hugging Face instead of 4.8×. With a static KV cache and
+  `torch.compile`, Hugging Face `generate()` reached 120 tokens/s, 3.5× its
+  own baseline and 73% of vLLM. Details are under
+  [E4](#e4-cuda-graphs-against-eager).
+
 One measured clue to the small-batch gap: at batch 1 on the 0.5B model, Hugging
 Face kept the GPU 38% busy and vLLM kept it 99% busy (`mean_util_pct` in the
 CSVs). Hugging Face was waiting on work outside the GPU between tokens, which
@@ -81,7 +88,9 @@ All 1,536 timed requests succeeded.
 
 ## Charts
 
-`python -m analysis.plots` regenerates every chart from the CSVs.
+`python -m analysis.plots` regenerates every chart from the CSVs, including
+the experiment charts shown under
+[Optimization experiments](#optimization-experiments).
 
 ![Offline throughput by batch size](analysis/figures/throughput_vs_batch_size.png)
 
@@ -187,6 +196,10 @@ Every change shown is beyond the noise floor.
 | 8 | `e4_hf_compiled` | 788 ± 3 (+200%) | 86 ± 1 (+103%) | 1,307 ± 7 (−67%) |
 | 8 | `e4_vllm_control` | 1,133 ± 3 | 99 ± 0 | 906 ± 1 |
 | 8 | `e4_vllm_eager` | 313 ± 2 (−72%) | 31 ± 0 (−68%) | 3,312 ± 38 (+266%) |
+
+![E4 throughput by run](analysis/figures/e4_throughput.png)
+
+![E4 GPU utilization by run](analysis/figures/e4_gpu_utilization.png)
 
 - **The hypothesis held.** Without graph capture and compilation, vLLM ran at
   40 tokens/s at batch 1, 1.2× Hugging Face's 34, against 4.8× with them on.
