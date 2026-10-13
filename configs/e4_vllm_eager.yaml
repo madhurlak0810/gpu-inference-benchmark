@@ -1,0 +1,4 @@
+# E4: vLLM in eager mode, without CUDA graphs.
+extends: e4_vllm_control.yaml
+vllm:
+  enforce_eager: true

@@ -1,0 +1,6 @@
+# E4 control: Hugging Face generate() as in the baseline, on the batch sizes
+# where host overhead dominates. Fewer prompts, since batch 1 runs at ~33 tok/s.
+extends: hf_offline_short.yaml
+batch_sizes: [1, 8]
+prompts:
+  num_prompts: 32

@@ -1,0 +1,4 @@
+# E1 scheduler limits: at most 16 sequences in the running batch.
+extends: _opt.yaml
+vllm:
+  max_num_seqs: 16

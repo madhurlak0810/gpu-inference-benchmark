@@ -1,0 +1,2 @@
+# E1 control: the optimization baseline with vLLM's default scheduler limits.
+extends: _opt.yaml

@@ -1,0 +1,5 @@
+# E1 scheduler limits: at most 8192 tokens processed per scheduler step.
+# 64 prompts of 128 tokens arriving together are 8,192 prefill tokens.
+extends: _opt.yaml
+vllm:
+  max_num_batched_tokens: 8192

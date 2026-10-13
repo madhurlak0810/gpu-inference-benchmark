@@ -1,0 +1,12 @@
+# E2 control: 1,024-token prompts, 256 tokens out, chunked prefill on.
+extends: _opt.yaml
+prompts:
+  file: data/prompts_long.jsonl
+  input_tokens: 1024
+max_new_tokens: 256
+open_loop:
+  request_rates: [2, 4]
+  num_requests: 96
+  warmup_requests: 8
+vllm:
+  enable_chunked_prefill: true

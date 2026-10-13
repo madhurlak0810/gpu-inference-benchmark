@@ -1,0 +1,12 @@
+# E3 control: 1,024-token prompts that share their first 512 tokens, prefix
+# caching off. Every request gets a suffix never sent before, so the shared
+# prefix is the only thing a cache could reuse.
+extends: _opt.yaml
+prompts:
+  file: data/prompts_shared_prefix.json
+  input_tokens: 1024
+  shared_prefix_tokens: 512
+open_loop:
+  request_rates: [2, 6]
+  num_requests: 96
+  warmup_requests: 8

@@ -1,0 +1,20 @@
+# Shared by every optimization experiment (E1 to E6): the online baseline plus
+# the three measurement fixes. An experiment config extends this and changes
+# one vLLM knob, so its control run is this file with no knob changed.
+extends: vllm_online.yaml
+concurrency: [16, 64]     # the levels where the baseline queues; 1 and 4 users never fill a batch
+
+# Open loop: Poisson arrivals at fixed rates, whether or not earlier requests
+# have finished. The closed-loop baseline served 14 requests/s at 16 users and
+# 28 at 64, so these rates run from light load to just past saturation.
+open_loop:
+  request_rates: [8, 16, 24, 32]   # requests/s
+  num_requests: 256                # per rate, per repeat
+  warmup_requests: 16              # x warmup_batches, untimed, before each rate
+
+# The Kaggle T4 machine has 4 cores. Keep the load client off the server's.
+cpu:
+  server_cores: [0, 1, 2]
+  client_cores: [3]
+
+scrape_metrics: true      # poll the server's /metrics for queue depth and KV cache use

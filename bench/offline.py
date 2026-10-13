@@ -8,6 +8,7 @@ decode greedily with no repetition penalty and are forced to produce exactly
 """
 from __future__ import annotations
 
+import hashlib
 import time
 
 from .gpu_monitor import GpuMonitor
@@ -36,6 +37,16 @@ class HFBackend:
         gen.eos_token_id = None
         gen.pad_token_id = self.tokenizer.pad_token_id
 
+        # Optional `hf:` settings. A static KV cache is allocated once at its
+        # full size instead of growing every token, which is also what lets
+        # generate() compile the forward pass; `compile` says whether it does.
+        hf = cfg.get("hf", {})
+        if hf.get("cache_implementation"):
+            gen.cache_implementation = hf["cache_implementation"]
+            gen.disable_compile = not hf.get("compile", False)
+        elif hf.get("compile"):
+            raise ValueError("hf.compile needs hf.cache_implementation: static")
+
     def generate(self, prompts: list[str], max_new_tokens: int) -> tuple[int, int]:
         """Run one batch; return (prompt tokens, generated tokens)."""
         torch = self.torch
@@ -43,8 +54,13 @@ class HFBackend:
         with torch.inference_mode():
             out = self.model.generate(**enc, max_new_tokens=max_new_tokens)
         torch.cuda.synchronize()
+        self._last = out[:, enc["input_ids"].shape[1]:]
         generated = (out.shape[1] - enc["input_ids"].shape[1]) * len(prompts)
         return int(enc["attention_mask"].sum()), generated
+
+    def output_sha(self) -> str:
+        """Fingerprint of the last batch's generated tokens; called outside the timed region."""
+        return hashlib.sha1(self._last.cpu().numpy().tobytes()).hexdigest()[:12]
 
     def new_setting(self) -> None:
         # Return cached blocks so NVML memory reflects this batch size, not the last.
@@ -67,10 +83,15 @@ class VLLMBackend:
     def generate(self, prompts: list[str], max_new_tokens: int) -> tuple[int, int]:
         params = self._sampling_params(temperature=0.0, max_tokens=max_new_tokens, ignore_eos=True)
         outputs = self.llm.generate(prompts, params, use_tqdm=False)
+        self._last = outputs
         return (
             sum(len(o.prompt_token_ids) for o in outputs),
             sum(len(o.outputs[0].token_ids) for o in outputs),
         )
+
+    def output_sha(self) -> str:
+        tokens = [list(o.outputs[0].token_ids) for o in self._last]
+        return hashlib.sha1(repr(tokens).encode()).hexdigest()[:12]
 
     def new_setting(self) -> None:
         pass
@@ -124,7 +145,7 @@ def run(cfg: dict, store: RunStore) -> None:
                         raw.append({
                             **label, "repeat": repeat, "batch_idx": i, "num_prompts": len(batch),
                             "prompt_tokens": prompt_tokens, "generated_tokens": generated,
-                            "latency_ms": round(latency_ms, 3),
+                            "latency_ms": round(latency_ms, 3), "output_sha": backend.output_sha(),
                         })
                     wall_s = time.perf_counter() - start
 

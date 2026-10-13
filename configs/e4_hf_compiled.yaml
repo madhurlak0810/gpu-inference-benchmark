@@ -1,0 +1,5 @@
+# E4: static KV cache plus torch.compile of the forward pass. Compilation
+# happens during the untimed warm-up batches of each batch size.
+extends: e4_hf_static.yaml
+hf:
+  compile: true

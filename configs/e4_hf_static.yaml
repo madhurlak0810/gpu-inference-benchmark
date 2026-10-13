@@ -1,0 +1,4 @@
+# E4: Hugging Face with a static KV cache, allocated once instead of grown per token.
+extends: e4_hf_control.yaml
+hf:
+  cache_implementation: static

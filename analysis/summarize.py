@@ -1,10 +1,13 @@
 """Reduce results/*/summary.csv to one row per setting: mean and std across repeats.
 
-`python -m analysis.summarize` prints the README results tables.
+`python -m analysis.summarize` prints the README results tables for the
+baseline runs. The optimization experiments (runs named e1_..., e2_...) are
+compared against their controls by `python -m analysis.compare`.
 """
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -12,17 +15,24 @@ import pandas as pd
 
 from bench.config import REPO_ROOT
 
-SWEEP = {"offline": "batch_size", "online": "concurrency"}
+SWEEP = {"offline": "batch_size", "online": "concurrency", "online_open": "request_rate"}
+EXPERIMENT = re.compile(r"e\d+_")  # run names of the optimization experiments
 GROUP = ["run", "backend", "model", "input_tokens", "max_new_tokens"]
 METRICS = [
     "throughput_tok_s", "latency_p50_ms", "latency_p95_ms", "ttft_p50_ms", "ttft_p95_ms",
     "itl_mean_ms", "peak_mem_gb", "mean_util_pct",
+    "itl_p95_ms", "max_gap_p95_ms", "cpu_server_pct", "cpu_client_pct",
+    "running_mean", "waiting_mean", "waiting_max", "kv_cache_peak_pct",
 ]
 
 
-def load(results_dir: str | Path) -> pd.DataFrame:
-    """Every successful (setting, repeat) row from every run; --smoke runs are skipped."""
-    paths = sorted(p for p in Path(results_dir).glob("*/summary.csv") if not p.parent.name.startswith("_"))
+def load(results_dir: str | Path, experiments: bool = False) -> pd.DataFrame:
+    """Every successful (setting, repeat) row from the baseline runs, or from
+    the optimization experiments instead; --smoke runs are skipped."""
+    paths = sorted(
+        p for p in Path(results_dir).glob("*/summary*.csv")
+        if not p.parent.name.startswith("_") and bool(EXPERIMENT.match(p.parent.name)) == experiments
+    )
     if not paths:
         return pd.DataFrame()
     df = pd.concat([pd.read_csv(p) for p in paths], ignore_index=True)

@@ -7,7 +7,9 @@ Every reported number comes from a CSV under `results/` and one command
 reproduces it.
 
 > **Status:** the baseline measurements below are complete. The optimization
-> experiment (quantization, prefix caching or batching limits) is not done yet.
+> experiments are set up but not yet measured: see
+> [Optimization experiments](#optimization-experiments) for the plan and its
+> checkpoints.
 
 ## Findings
 
@@ -87,6 +89,181 @@ All 1,536 timed requests succeeded.
 ![p95 end-to-end latency by concurrent users](analysis/figures/p95_latency_vs_concurrency.png)
 
 ![p95 time to first token by concurrent users](analysis/figures/ttft_vs_concurrency.png)
+
+## Optimization experiments
+
+The baseline points at three bottlenecks: requests queue before their first
+token, Hugging Face leaves the GPU idle at small batches, and memory caps
+concurrency. Each experiment below changes one setting against a control run
+measured in the same session, and is judged on the metric its hypothesis names.
+
+**Nothing in this section has been measured on the T4 yet.** The harness
+changes were checked end to end against a local mock server; every result
+table is a placeholder until its run lands.
+
+### Checkpoints
+
+Harness (shared by every experiment):
+
+- [x] Open-loop load: Poisson arrivals at fixed request rates, next to the
+      closed-loop mode (`open_loop` in a config; results in `summary_open.csv`)
+- [x] Server pinned to cores 0–2 and the load client to core 3, with each
+      side's CPU utilization recorded per repeat (`cpu`)
+- [x] vLLM's `/metrics` scraped during each repeat: running and queued
+      requests, KV cache use (`scrape_metrics`; samples in `server_metrics.csv`)
+- [x] Output fingerprint per request (online) or batch (offline), to check
+      that an optimization leaves greedy outputs unchanged
+- [x] Longest gap between two streamed tokens per request, for stalls that
+      the mean inter-token latency hides
+- [x] `python -m analysis.compare <experiment>`: each run against its control,
+      with the noise-floor rule applied
+- [x] `scripts/kaggle_job.py`: start a run on a Kaggle T4 and fetch its results
+- [ ] `--smoke` of one config of each experiment on the T4 (confirms the vLLM
+      0.31.0 flag names, the `/metrics` gauge names and `taskset` pinning)
+- [ ] `e1_control` at 16 and 64 users reproduces the `vllm_online` baseline
+      (1,802 and 3,629 tokens/s) with pinning and scraping on
+
+Experiments, in the order they will run:
+
+| # | Experiment | Setup | Smoke on T4 | Measured | Written up |
+| --- | --- | :---: | :---: | :---: | :---: |
+| E4 | CUDA graphs against eager | ✅ | ☐ | ☐ | ☐ |
+| E3 | Prefix caching | ✅ | ☐ | ☐ | ☐ |
+| E1 | Scheduler limits | ✅ | ☐ | ☐ | ☐ |
+| E2 | Chunked prefill | ✅ | ☐ | ☐ | ☐ |
+| E5 | 4-bit weight quantization | ☐ | ☐ | ☐ | ☐ |
+| E6 | Speculative decoding | ☐ | ☐ | ☐ | ☐ |
+
+After the runs: charts per experiment, and a table of which setting to use for
+low-latency, high-throughput and memory-limited serving.
+
+### How a result is judged
+
+- **Noise floor.** A change counts only if it is larger than twice the larger
+  standard deviation of the two runs compared (3 repeats each).
+  `analysis.compare` prints such changes in bold.
+- **Same outputs.** Decoding is greedy, so E1 to E4 should return the same
+  text as their control. `analysis.compare` reports the share of outputs whose
+  fingerprint matches; a mismatch is reported, not hidden.
+- **No hidden regressions.** Every row carries throughput, time to first
+  token, inter-token latency, p95 end-to-end latency and peak memory, so a
+  gain on one that costs another is visible.
+
+### E4: CUDA graphs against eager
+
+**Symptom.** At batch 1, vLLM ran 5.1× faster than Hugging Face (168 against
+33 tokens/s) and kept the GPU 99% busy against 38%.
+
+**Hypothesis.** Most of that lead comes from removing per-token launch
+overhead. Turning CUDA graphs off should narrow vLLM's lead; a static KV cache
+and `torch.compile` should close part of the gap from the Hugging Face side.
+
+| Config | Change from its control |
+| --- | --- |
+| `e4_hf_control` | Hugging Face as in the baseline: batch sizes 1 and 8, 32 prompts |
+| `e4_hf_static` | `hf.cache_implementation: static` |
+| `e4_hf_compiled` | Static cache plus `hf.compile: true`; compilation falls in the untimed warm-up |
+| `e4_vllm_control` | vLLM with its defaults |
+| `e4_vllm_eager` | `vllm.enforce_eager: true` |
+
+**Primary metrics.** Tokens/s and GPU utilization at batch 1.
+
+**Results.** _Pending: `python -m analysis.compare e4`._
+
+### E3: Prefix caching
+
+**Symptom.** From 1 to 64 users, median time to first token grew 16× (21 to
+335 ms) while inter-token latency grew 2.5×: the wait is in prefill.
+
+**Hypothesis.** When prompts share a system prompt, caching it removes half of
+each prefill and time to first token drops.
+
+**Workload.** 1,024-token prompts whose first 512 tokens are identical
+(`data/prompts_shared_prefix.json`). Every request gets a suffix that has never
+been sent before, built at run time from words that are one token each. The
+baseline prompt sets repeat across warm-ups and repeats, so with a cache on
+they would hit on the whole prompt and overstate the gain; here the shared
+prefix is the only thing a cache can reuse.
+
+| Config | Change from its control |
+| --- | --- |
+| `e3_control` | The shared-prefix workload, prefix caching off |
+| `e3_prefix_cache` | `vllm.enable_prefix_caching: true` |
+
+**Primary metric.** Time to first token, p50.
+
+**Results.** _Pending: `python -m analysis.compare e3`._
+
+### E1: Scheduler limits
+
+**Symptom.** At 64 users the server reached 3,629 tokens/s at a p95
+end-to-end latency of 2,291 ms, with a p95 time to first token of 517 ms.
+
+**Hypothesis.** Capping how many sequences run at once trades peak throughput
+for lower tail latency. The per-step token budget decides how fast a wave of
+new prompts is prefilled: 64 prompts of 128 tokens are 8,192 tokens.
+
+| Config | Change from its control |
+| --- | --- |
+| `e1_control` | vLLM's default scheduler limits |
+| `e1_seqs_016`, `_032`, `_064`, `_128` | `vllm.max_num_seqs` |
+| `e1_tokens_1024`, `_4096`, `_8192` | `vllm.max_num_batched_tokens` |
+
+**Primary metrics.** p95 end-to-end latency and throughput at 64 users, with
+queued requests from `/metrics` to show where the time went.
+
+**Results.** _Pending: `python -m analysis.compare e1`._
+
+### E2: Chunked prefill
+
+**Symptom.** The same queueing before the first token. The online baseline
+used 128-token prompts only, so long prompts under load are unmeasured so far.
+
+**Hypothesis.** A 1,024-token prefill done in one step holds up every running
+decode. Splitting it into chunks lets decodes keep running, which lowers p95
+time to first token and steadies inter-token latency.
+
+| Config | Change from its control |
+| --- | --- |
+| `e2_control` | 1,024 tokens in, 256 out, `vllm.enable_chunked_prefill: true` |
+| `e2_chunked_off` | `vllm.enable_chunked_prefill: false` |
+
+**Primary metrics.** Time to first token p95, and the longest gap between two
+tokens p95.
+
+**Results.** _Pending: `python -m analysis.compare e2`._
+
+### E5 and E6
+
+Not set up yet. E5 serves a 4-bit AWQ or GPTQ build of Qwen2.5-1.5B to free
+memory for the KV cache, with a quality check against fp16. E6 uses the 0.5B
+model to draft tokens for the 1.5B (speculative decoding); the two share a
+tokenizer.
+
+### Running them
+
+Every optimization config extends `configs/_opt.yaml`, the online baseline
+with the measurement changes on, or an offline baseline config for E4. Run one
+like any other experiment:
+
+```bash
+python -m bench.run configs/e1_seqs_016.yaml --smoke   # check it starts
+python -m bench.run configs/e1_seqs_016.yaml
+python -m analysis.compare e1
+```
+
+Or run a whole experiment on a Kaggle T4 from a terminal, with the
+[Kaggle CLI](https://github.com/Kaggle/kaggle-cli) installed and logged in:
+
+```bash
+python scripts/kaggle_job.py push e4 --smoke   # a few minutes: every e4 config, tiny
+python scripts/kaggle_job.py push e4           # the real run
+python scripts/kaggle_job.py status e4
+python scripts/kaggle_job.py fetch e4          # copies the run into results/
+```
+
+`push` starts a private kernel that clones this repo at the current commit, so
+the commit has to be on GitHub first.
 
 ## Methodology
 
@@ -210,5 +387,7 @@ does not need to be run again.
 - Offline latency percentiles are over batches, and at batch size 64 a repeat
   is a single batch.
 
-Next: one optimization experiment (AWQ 4-bit quantization, prefix caching, or
-batching limits) measured against the `vllm_online` baseline.
+Next: the [optimization experiments](#optimization-experiments). Their harness
+adds open-loop load and client pinning, which address the two limitations
+above about wave arrivals and the shared machine; the baseline numbers
+themselves are unchanged.
