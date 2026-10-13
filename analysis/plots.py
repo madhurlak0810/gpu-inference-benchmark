@@ -57,7 +57,20 @@ EXPERIMENT_CHARTS = [
      "vLLM's eager mode turns off torch.compile and kernel warm-up as well as CUDA graphs."),
     ("e4", "offline", "mean_util_pct", "E4: GPU utilization with and without compilation",
      "Mean GPU utilization (%)", "e4_gpu_utilization.png", ""),
+    ("e3", "online_open", "ttft_p50_ms", "E3: time to first token at a fixed request rate",
+     "Median time to first token (ms)", "e3_ttft_open_loop.png",
+     "Open loop: requests arrive at the stated rate whether or not earlier ones have finished."),
+    ("e3", "online", "ttft_p50_ms", "E3: time to first token with a fixed number of users",
+     "Median time to first token (ms)", "e3_ttft_closed_loop.png",
+     "Closed loop: each user sends its next request as soon as the last one finishes, "
+     "so a faster server is sent more requests."),
+    ("e3", "online", "throughput_tok_s", "E3: throughput with a fixed number of users",
+     "Generated tokens per second", "e3_throughput_closed_loop.png", ""),
 ]
+WORKLOAD = {
+    "e4": "Qwen2.5-0.5B, 128 tokens in and out",
+    "e3": "Qwen2.5-0.5B, 1,024 tokens in (the first 512 shared by every prompt) and 128 out",
+}
 PANEL_LABEL = {"batch_size": "Batch size {}", "concurrency": "{} concurrent users",
                "request_rate": "{} requests per second"}
 # Run -> bar label, in the order the bars are drawn.
@@ -67,6 +80,8 @@ RUN_LABELS = {
     "e4_hf_compiled": "+ static KV cache, torch.compile",
     "e4_vllm_control": "vLLM",
     "e4_vllm_eager": "vLLM, eager mode",
+    "e3_control": "Prefix caching off",
+    "e3_prefix_cache": "Prefix caching on",
 }
 
 plt.rcParams.update({
@@ -255,7 +270,7 @@ def main() -> None:
         if agg.empty or f"{metric}_mean" not in agg:
             print(f"skipped {filename}: no {experiment} results")
             continue
-        subtitle = [f"{gpu}, Qwen2.5-0.5B, 128 tokens in and out. Mean across repeats; bars show ± 1 standard deviation."]
+        subtitle = [f"{gpu}, {WORKLOAD[experiment]}. Mean across repeats; bars show ± 1 standard deviation."]
         if note:
             subtitle.append(note)
         bar_chart(agg, SWEEP[mode], metric, title, x_label, subtitle, out / filename)

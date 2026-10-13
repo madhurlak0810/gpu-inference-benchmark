@@ -7,8 +7,8 @@ Every reported number comes from a CSV under `results/` and one command
 reproduces it.
 
 > **Status:** the baseline measurements below are complete. Of the
-> optimization experiments, E4 (CUDA graphs against eager) is measured; E3, E1
-> and E2 are set up but not yet run. See
+> optimization experiments, E4 (CUDA graphs against eager) and E3 (prefix
+> caching) are measured; E1 and E2 are set up but not yet run. See
 > [Optimization experiments](#optimization-experiments) for the plan and its
 > checkpoints.
 
@@ -41,6 +41,12 @@ setting was 2.3%.
   `torch.compile`, Hugging Face `generate()` reached 120 tokens/s, 3.5× its
   own baseline and 73% of vLLM. Details are under
   [E4](#e4-cuda-graphs-against-eager).
+
+- **Prefix caching cut the wait for the first token at a fixed request rate**
+  (optimization experiment E3). With prompts sharing half their 1,024 tokens,
+  median time to first token fell 26% at 2 requests/s and 56% at 6. With a
+  fixed number of users the gain showed up as 20% to 30% more throughput
+  instead. Details are under [E3](#e3-prefix-caching).
 
 One measured clue to the small-batch gap: at batch 1 on the 0.5B model, Hugging
 Face kept the GPU 38% busy and vLLM kept it 99% busy (`mean_util_pct` in the
@@ -107,10 +113,8 @@ token, Hugging Face leaves the GPU idle at small batches, and memory caps
 concurrency. Each experiment below changes one setting against a control run
 measured in the same session, and is judged on the metric its hypothesis names.
 
-**Only E4 has been measured on the T4 so far.** The online harness changes
-(open-loop load, pinning, `/metrics` scraping) were checked end to end against
-a local mock server but have not yet run against vLLM; the result tables of
-E3, E1 and E2 are placeholders until their runs land.
+**E4 and E3 have been measured on the T4 so far.** The result tables of E1
+and E2 are placeholders until their runs land.
 
 ### Checkpoints
 
@@ -130,8 +134,11 @@ Harness (shared by every experiment):
       with the noise-floor rule applied
 - [x] `scripts/kaggle_job.py`: start a run on a Kaggle T4 and fetch its results
 - [x] `--smoke` of E4 on the T4 (all five configs)
-- [ ] `--smoke` of E3, E1 and E2 on the T4 (confirms the vLLM 0.31.0 flag
-      names, the `/metrics` gauge names and `taskset` pinning)
+- [x] `--smoke` of E3 on the T4: `taskset` pinning, the `/metrics` gauge
+      names, open-loop load and exact 1,024-token prompts all confirmed
+      against vLLM 0.31.0
+- [ ] `--smoke` of E1 and E2 on the T4 (confirms `max_num_seqs`,
+      `max_num_batched_tokens` and `enable_chunked_prefill: false`)
 - [ ] `e1_control` at 16 and 64 users reproduces the `vllm_online` baseline
       (1,802 and 3,629 tokens/s) with pinning and scraping on
 
@@ -140,7 +147,7 @@ Experiments, in the order they will run:
 | # | Experiment | Setup | Smoke on T4 | Measured | Written up |
 | --- | --- | :---: | :---: | :---: | :---: |
 | E4 | CUDA graphs against eager | ✅ | ✅ | ✅ | ✅ |
-| E3 | Prefix caching | ✅ | ☐ | ☐ | ☐ |
+| E3 | Prefix caching | ✅ | ✅ | ✅ | ✅ |
 | E1 | Scheduler limits | ✅ | ☐ | ☐ | ☐ |
 | E2 | Chunked prefill | ✅ | ☐ | ☐ | ☐ |
 | E5 | 4-bit weight quantization | ☐ | ☐ | ☐ | ☐ |
@@ -248,7 +255,64 @@ prefix is the only thing a cache can reuse.
 
 **Primary metric.** Time to first token, p50.
 
-**Results.** _Pending: `python -m analysis.compare e3`._
+**Results.** Printed by `python -m analysis.compare e3`: mean ± standard
+deviation over 3 repeats, with the change from the control in brackets. Bold
+marks a change beyond the noise floor.
+
+Open loop, requests arriving at a fixed rate:
+
+| Requests/s | Run | TTFT p50 (ms) | TTFT p95 (ms) | ITL mean (ms) | E2E p95 (ms) | Throughput (tok/s) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 2 | `e3_control` | 139 ± 0 | 279 ± 65 | 9.6 ± 0.8 | 2,020 ± 416 | 251 ± 26 |
+| 2 | `e3_prefix_cache` | 103 ± 1 (**−26%**) | 171 ± 36 (−39%) | 8.4 ± 0.5 (−12%) | 1,620 ± 283 (−20%) | 252 ± 27 (+0%) |
+| 6 | `e3_control` | 365 ± 24 | 753 ± 61 | 49.8 ± 8.0 | 9,439 ± 2,326 | 681 ± 6 |
+| 6 | `e3_prefix_cache` | 160 ± 13 (**−56%**) | 318 ± 44 (**−58%**) | 24.3 ± 2.7 (**−51%**) | 4,431 ± 500 (**−53%**) | 729 ± 16 (**+7%**) |
+
+Closed loop, a fixed number of users:
+
+| Users | Run | TTFT p50 (ms) | TTFT p95 (ms) | ITL mean (ms) | E2E p95 (ms) | Throughput (tok/s) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 16 | `e3_control` | 653 ± 20 | 1,206 ± 39 | 20.7 ± 0.4 | 3,679 ± 107 | 626 ± 15 |
+| 16 | `e3_prefix_cache` | 668 ± 5 (+2%) | 997 ± 47 (**−17%**) | 16.5 ± 0.3 (**−20%**) | 2,928 ± 29 (**−20%**) | 754 ± 6 (**+20%**) |
+| 64 | `e3_control` | 964 ± 6 | 6,751 ± 15 | 66.3 ± 0.2 | 16,610 ± 53 | 751 ± 2 |
+| 64 | `e3_prefix_cache` | 1,186 ± 4 (**+23%**) | 4,524 ± 13 (**−33%**) | 51.6 ± 0.2 (**−22%**) | 11,796 ± 59 (**−29%**) | 975 ± 1 (**+30%**) |
+
+![E3 time to first token, open loop](analysis/figures/e3_ttft_open_loop.png)
+
+![E3 time to first token, closed loop](analysis/figures/e3_ttft_closed_loop.png)
+
+![E3 throughput, closed loop](analysis/figures/e3_throughput_closed_loop.png)
+
+- **At a fixed request rate the hypothesis held.** Median time to first token
+  fell 26% at 2 requests/s (139 to 103 ms) and 56% at 6 requests/s (365 to
+  160 ms).
+- **With a fixed number of users it did not, on the primary metric.** Median
+  time to first token was unchanged at 16 users and 23% higher at 64. The
+  gain went into throughput instead: 20% more tokens/s at 16 users and 30% at
+  64, with p95 time to first token down 17% and 33% and p95 end-to-end
+  latency down 20% and 29%. Closed-loop users send their next request as soon
+  as the last one returns, so the faster server was sent more requests (7.6
+  against 5.9 per second at 64 users) and the queue in front of it stayed
+  full. This is the wave effect the open-loop mode was added to remove.
+- **Part of the 6 requests/s gain is the control saturating.** The control's
+  closed-loop ceiling was 5.9 requests/s, and at an offered 6 it completed
+  5.3; with the cache on the ceiling was 7.6. At 2 requests/s neither server
+  was near its limit, so the 26% there is the cleaner estimate of what the
+  cache saves per request.
+- **Peak KV cache use fell by 42% to 71%** (from 7.3% to 4.1% at 64 users),
+  since the shared prefix is stored once.
+- **Outputs were not all identical:** 715 of 768 closed-loop outputs and 524
+  of 576 open-loop outputs matched the control (93% and 91%). As in E4, only
+  fingerprints were recorded, so the cause is unconfirmed.
+- **The noise flag at 2 requests/s is an artifact.** Both runs were flagged
+  for a throughput spread just over 10% there. Below saturation, open-loop
+  throughput is set by the arrival schedule, which differs between repeats
+  and is identical between the two runs (251 ± 26 against 252 ± 27), so the
+  spread is not measurement noise and the setting was not rerun.
+
+No request failed, every prompt was 1,024 tokens on the server, and the
+client core stayed under 15% busy. The run took 21 minutes on the T4 at commit
+`a7f33f7`.
 
 ### E1: Scheduler limits
 
