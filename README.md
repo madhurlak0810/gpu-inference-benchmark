@@ -420,6 +420,7 @@ time to first token and steadies inter-token latency.
 | --- | --- |
 | `e2_control` | 1,024 tokens in, 256 out, `vllm.enable_chunked_prefill: true` |
 | `e2_chunked_off` | `vllm.enable_chunked_prefill: false` |
+| `e2_control_repeat` | Nothing: the control again, run last, to show how much the order of the runs moves the numbers (see [E1](#e1-scheduler-limits)) |
 
 **Primary metrics.** Time to first token p95, and the longest gap between two
 tokens p95.

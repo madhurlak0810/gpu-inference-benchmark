@@ -79,11 +79,11 @@ def slug(experiment: str, smoke: bool) -> str:
 
 
 def configs_of(experiment: str) -> list[str]:
-    """Every config of the experiment, controls first."""
+    """Every config of the experiment: controls first, repeated controls last."""
     names = sorted(p.stem for p in (REPO_ROOT / "configs").glob(f"{experiment}_*.yaml"))
     if not names:
         raise SystemExit(f"no configs/{experiment}_*.yaml")
-    return sorted(names, key=lambda n: not n.endswith("_control"))
+    return sorted(names, key=lambda n: 0 if n.endswith("_control") else 2 if n.endswith("_control_repeat") else 1)
 
 
 def push(args) -> None:
