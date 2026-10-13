@@ -48,28 +48,45 @@ CHARTS = [
     ("online", "ttft_p95_ms", "run", "p95 time to first token by concurrent users",
      "p95 time to first token (ms)", "ttft_vs_concurrency.png", ""),
 ]
-X_LABEL = {"offline": "Batch size", "online": "Concurrent users"}
+X_LABEL = {"offline": "Batch size", "online": "Concurrent users", "online_open": "Requests per second"}
 
-# Experiment bar charts: experiment, mode, metric, title, x label, file, note.
+# Experiment bar charts: experiment, mode, metric, title, x label, file, note, runs (None = all).
 EXPERIMENT_CHARTS = [
     ("e4", "offline", "throughput_tok_s", "E4: throughput with and without compilation",
      "Generated tokens per second", "e4_throughput.png",
-     "vLLM's eager mode turns off torch.compile and kernel warm-up as well as CUDA graphs."),
+     "vLLM's eager mode turns off torch.compile and kernel warm-up as well as CUDA graphs.", None),
     ("e4", "offline", "mean_util_pct", "E4: GPU utilization with and without compilation",
-     "Mean GPU utilization (%)", "e4_gpu_utilization.png", ""),
+     "Mean GPU utilization (%)", "e4_gpu_utilization.png", "", None),
     ("e3", "online_open", "ttft_p50_ms", "E3: time to first token at a fixed request rate",
      "Median time to first token (ms)", "e3_ttft_open_loop.png",
-     "Open loop: requests arrive at the stated rate whether or not earlier ones have finished."),
+     "Open loop: requests arrive at the stated rate whether or not earlier ones have finished.", None),
     ("e3", "online", "ttft_p50_ms", "E3: time to first token with a fixed number of users",
      "Median time to first token (ms)", "e3_ttft_closed_loop.png",
      "Closed loop: each user sends its next request as soon as the last one finishes, "
-     "so a faster server is sent more requests."),
+     "so a faster server is sent more requests.", None),
     ("e3", "online", "throughput_tok_s", "E3: throughput with a fixed number of users",
-     "Generated tokens per second", "e3_throughput_closed_loop.png", ""),
+     "Generated tokens per second", "e3_throughput_closed_loop.png", "", None),
+    ("e1", "online", "throughput_tok_s", "E1: throughput under scheduler limits",
+     "Generated tokens per second", "e1_throughput_closed_loop.png",
+     "Closed loop. The control ran first and was about 5% faster than every other run, "
+     "including those whose limit never binds.", None),
+    ("e1", "online", "latency_p95_ms", "E1: p95 end-to-end latency under scheduler limits",
+     "p95 end-to-end latency (ms)", "e1_latency_closed_loop.png", "Closed loop.", None),
+    ("e1", "online", "max_gap_p95_ms", "E1: longest wait between two tokens, by token budget",
+     "p95 of each request's longest gap between tokens (ms)", "e1_token_gap_closed_loop.png",
+     "Closed loop.", ("e1_tokens_1024", "e1_control", "e1_tokens_4096", "e1_tokens_8192")),
+]
+# Experiment sweep charts, at most 4 runs each: experiment, mode, metric, title, y label, file, note, runs.
+EXPERIMENT_SWEEPS = [
+    ("e1", "online_open", "latency_p95_ms", "E1: p95 end-to-end latency by request rate",
+     "p95 latency (ms)", "e1_latency_vs_request_rate.png",
+     "Open loop: requests arrive at the stated rate whether or not earlier ones have finished.",
+     ("e1_control", "e1_seqs_016", "e1_seqs_032", "e1_seqs_064")),
 ]
 WORKLOAD = {
     "e4": "Qwen2.5-0.5B, 128 tokens in and out",
     "e3": "Qwen2.5-0.5B, 1,024 tokens in (the first 512 shared by every prompt) and 128 out",
+    "e1": "Qwen2.5-0.5B, 128 tokens in and out",
 }
 PANEL_LABEL = {"batch_size": "Batch size {}", "concurrency": "{} concurrent users",
                "request_rate": "{} requests per second"}
@@ -82,6 +99,14 @@ RUN_LABELS = {
     "e4_vllm_eager": "vLLM, eager mode",
     "e3_control": "Prefix caching off",
     "e3_prefix_cache": "Prefix caching on",
+    "e1_control": "Default limits",
+    "e1_seqs_016": "max_num_seqs 16",
+    "e1_seqs_032": "max_num_seqs 32",
+    "e1_seqs_064": "max_num_seqs 64",
+    "e1_seqs_128": "max_num_seqs 128",
+    "e1_tokens_1024": "max_num_batched_tokens 1,024",
+    "e1_tokens_4096": "max_num_batched_tokens 4,096",
+    "e1_tokens_8192": "max_num_batched_tokens 8,192",
 }
 
 plt.rcParams.update({
@@ -100,7 +125,7 @@ def _styles(agg, series: str) -> dict:
     names = sorted(agg[series].unique())
     if len(names) > len(SLOTS):
         raise ValueError(f"{len(names)} runs on one chart; plot at most {len(SLOTS)} or split them")
-    return {name: (name, SLOTS[i]) for i, name in enumerate(names)}
+    return {name: (RUN_LABELS.get(name, name), SLOTS[i]) for i, name in enumerate(names)}
 
 
 def _compact(value: float, _pos=None) -> str:
@@ -128,7 +153,7 @@ def sweep_chart(agg, sweep: str, metric: str, series: str, title: str, y_label: 
 
     # The header (title, subtitle, legend) is sized in inches from its contents,
     # so a longer subtitle pushes the plot down instead of running into it.
-    width = max(4.4 * len(panels) + 0.8, 6.0)
+    width = max(4.4 * len(panels) + 0.8, 6.0, 2.5 * len(shown))  # room for the legend row
     lines = [line for part in subtitle for line in textwrap.wrap(part, int(width * 11.5))]
     legend_top = 0.58 + 0.18 * len(lines)
     header = legend_top + (0.38 if has_legend else 0.08)
@@ -189,9 +214,10 @@ def sweep_chart(agg, sweep: str, metric: str, series: str, title: str, y_label: 
     plt.close(fig)
 
 
-def bar_chart(agg, sweep: str, metric: str, title: str, x_label: str, subtitle: list[str], path: Path) -> None:
+def bar_chart(agg, sweep: str, metric: str, title: str, x_label: str, subtitle: list[str], path: Path,
+              runs: tuple[str, ...] | None = None) -> None:
     """One horizontal bar per run, colored by backend, one panel per swept setting."""
-    runs = [r for r in RUN_LABELS if r in set(agg["run"])]
+    runs = [r for r in (runs or RUN_LABELS) if r in set(agg["run"])]
     settings = sorted(agg[sweep].unique())
     backend_of = dict(zip(agg["run"], agg["backend"]))
     shown = [BACKENDS[b] for b in BACKENDS if b in backend_of.values()]
@@ -264,17 +290,22 @@ def main() -> None:
         print(f"wrote {out / filename}")
 
     experiments = load(results_dir, experiments=True)
-    for experiment, mode, metric, title, x_label, filename, note in EXPERIMENT_CHARTS:
-        runs = experiments[experiments["run"].str.startswith(experiment + "_")] if not experiments.empty else experiments
-        agg = aggregate(runs, mode)
-        if agg.empty or f"{metric}_mean" not in agg:
-            print(f"skipped {filename}: no {experiment} results")
-            continue
-        subtitle = [f"{gpu}, {WORKLOAD[experiment]}. Mean across repeats; bars show ± 1 standard deviation."]
-        if note:
-            subtitle.append(note)
-        bar_chart(agg, SWEEP[mode], metric, title, x_label, subtitle, out / filename)
-        print(f"wrote {out / filename}")
+    for kind, charts in (("bar", EXPERIMENT_CHARTS), ("sweep", EXPERIMENT_SWEEPS)):
+        for experiment, mode, metric, title, label, filename, note, runs in charts:
+            rows = experiments[experiments["run"].str.startswith(experiment + "_")] if not experiments.empty else experiments
+            agg = aggregate(rows, mode)
+            if agg.empty or f"{metric}_mean" not in agg:
+                print(f"skipped {filename}: no {experiment} results")
+                continue
+            subtitle = [f"{gpu}, {WORKLOAD[experiment]}. Mean across repeats; bars show ± 1 standard deviation."]
+            if note:
+                subtitle.append(note)
+            if kind == "bar":
+                bar_chart(agg, SWEEP[mode], metric, title, label, subtitle, out / filename, runs)
+            else:
+                sweep_chart(agg[agg["run"].isin(runs)], SWEEP[mode], metric, "run", title, label,
+                            X_LABEL[mode], subtitle, out / filename)
+            print(f"wrote {out / filename}")
 
 
 if __name__ == "__main__":
