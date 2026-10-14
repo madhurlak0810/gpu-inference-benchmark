@@ -75,6 +75,16 @@ EXPERIMENT_CHARTS = [
     ("e1", "online", "max_gap_p95_ms", "E1: longest wait between two tokens, by token budget",
      "p95 of each request's longest gap between tokens (ms)", "e1_token_gap_closed_loop.png",
      "Closed loop.", ("e1_tokens_1024", "e1_control", "e1_tokens_4096", "e1_tokens_8192")),
+    ("e2", "online", "ttft_p95_ms", "E2: p95 time to first token with a fixed number of users",
+     "p95 time to first token (ms)", "e2_ttft_p95_closed_loop.png", "Closed loop.", None),
+    ("e2", "online", "ttft_p50_ms", "E2: median time to first token with a fixed number of users",
+     "Median time to first token (ms)", "e2_ttft_p50_closed_loop.png", "Closed loop.", None),
+    ("e2", "online", "max_gap_p95_ms", "E2: longest wait between two tokens",
+     "p95 of each request's longest gap between tokens (ms)", "e2_token_gap_closed_loop.png",
+     "Closed loop.", None),
+    ("e2", "online_open", "ttft_p95_ms", "E2: p95 time to first token at a fixed request rate",
+     "p95 time to first token (ms)", "e2_ttft_p95_open_loop.png",
+     "Open loop: requests arrive at the stated rate whether or not earlier ones have finished.", None),
 ]
 # Experiment sweep charts, at most 4 runs each: experiment, mode, metric, title, y label, file, note, runs.
 EXPERIMENT_SWEEPS = [
@@ -87,6 +97,7 @@ WORKLOAD = {
     "e4": "Qwen2.5-0.5B, 128 tokens in and out",
     "e3": "Qwen2.5-0.5B, 1,024 tokens in (the first 512 shared by every prompt) and 128 out",
     "e1": "Qwen2.5-0.5B, 128 tokens in and out",
+    "e2": "Qwen2.5-0.5B, 1,024 tokens in and 256 out",
 }
 PANEL_LABEL = {"batch_size": "Batch size {}", "concurrency": "{} concurrent users",
                "request_rate": "{} requests per second"}
@@ -99,6 +110,9 @@ RUN_LABELS = {
     "e4_vllm_eager": "vLLM, eager mode",
     "e3_control": "Prefix caching off",
     "e3_prefix_cache": "Prefix caching on",
+    "e2_control": "Chunked prefill on",
+    "e2_chunked_off": "Chunked prefill off",
+    "e2_control_repeat": "Chunked prefill on, repeated last",
     "e1_control": "Default limits",
     "e1_seqs_016": "max_num_seqs 16",
     "e1_seqs_032": "max_num_seqs 32",

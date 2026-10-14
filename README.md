@@ -8,8 +8,8 @@ reproduces it.
 
 > **Status:** the baseline measurements below are complete. Of the
 > optimization experiments, E4 (CUDA graphs against eager), E3 (prefix
-> caching) and E1 (scheduler limits) are measured; E2 is set up but not yet
-> run. See
+> caching), E1 (scheduler limits) and E2 (chunked prefill) are measured; E5
+> and E6 are not set up yet. See
 > [Optimization experiments](#optimization-experiments) for the plan and its
 > checkpoints.
 
@@ -54,6 +54,13 @@ setting was 2.3%.
   sequences halved throughput and doubled p95 end-to-end latency; vLLM's
   default scheduler limits were the best setting measured on both. Details
   are under [E1](#e1-scheduler-limits).
+
+- **Chunked prefill did not steady token pacing on 1,024-token prompts**
+  (optimization experiment E2). The longest gap between two tokens was 41% to
+  44% shorter with it off, and its effect on p95 time to first token was
+  within 10% either way. The likely reason is that these prompts fit inside
+  one scheduler step, leaving nothing to split. Details are under
+  [E2](#e2-chunked-prefill).
 
 One measured clue to the small-batch gap: at batch 1 on the 0.5B model, Hugging
 Face kept the GPU 38% busy and vLLM kept it 99% busy (`mean_util_pct` in the
@@ -120,8 +127,8 @@ token, Hugging Face leaves the GPU idle at small batches, and memory caps
 concurrency. Each experiment below changes one setting against a control run
 measured in the same session, and is judged on the metric its hypothesis names.
 
-**E4, E3 and E1 have been measured on the T4 so far.** The result table of E2
-is a placeholder until its run lands.
+**E4, E3, E1 and E2 have been measured on the T4.** E5 and E6 are not set up
+yet.
 
 ### Checkpoints
 
@@ -146,7 +153,8 @@ Harness (shared by every experiment):
       against vLLM 0.31.0
 - [x] `--smoke` of E1 on the T4: vLLM 0.31.0 accepts `max_num_seqs` and
       `max_num_batched_tokens` as written
-- [ ] `--smoke` of E2 on the T4 (confirms `enable_chunked_prefill: false`)
+- [x] `--smoke` of E2 on the T4: `enable_chunked_prefill: false` is accepted,
+      with a warning from vLLM that the model does not officially support it
 - [x] The `vllm_online` baseline (1,802 and 3,629 tokens/s at 16 and 64
       users) is reproduced with pinning and scraping on: the seven E1 runs
       after the control gave 1,799 to 1,823 and 3,580 to 3,653 where their
@@ -160,7 +168,7 @@ Experiments, in the order they will run:
 | E4 | CUDA graphs against eager | ✅ | ✅ | ✅ | ✅ |
 | E3 | Prefix caching | ✅ | ✅ | ✅ | ✅ |
 | E1 | Scheduler limits | ✅ | ✅ | ✅ | ✅ |
-| E2 | Chunked prefill | ✅ | ☐ | ☐ | ☐ |
+| E2 | Chunked prefill | ✅ | ✅ | ✅ | ✅ |
 | E5 | 4-bit weight quantization | ☐ | ☐ | ☐ | ☐ |
 | E6 | Speculative decoding | ☐ | ☐ | ☐ | ☐ |
 
@@ -396,7 +404,8 @@ change from the control in brackets. Closed loop at 64 users:
   start is one candidate. The noise floor is computed from repeats within one
   server launch and does not cover this, so changes of this size are marked
   as beyond noise by `analysis.compare` without being real effects of the
-  setting.
+  setting. E2 repeated its control at the end of the session to test for the
+  same offset and did not find it.
 - **Caps of 64 or lower raised light-load latency too.** At 8 requests/s,
   where about 8 requests are in flight and no cap binds, median time to first
   token was 42 to 43 ms with caps of 16, 32 and 64 against 33 ms for the
@@ -425,7 +434,77 @@ time to first token and steadies inter-token latency.
 **Primary metrics.** Time to first token p95, and the longest gap between two
 tokens p95.
 
-**Results.** _Pending: `python -m analysis.compare e2`._
+**Results.** Printed by `python -m analysis.compare e2`: mean ± standard
+deviation over 3 repeats, with the change from the control in brackets. Bold
+marks a change beyond the noise floor. The control has chunked prefill on, so
+a negative change means turning it off lowered the number.
+
+Closed loop, a fixed number of users:
+
+| Users | Run | TTFT p95 (ms) | Longest token gap p95 (ms) | TTFT p50 (ms) | ITL mean (ms) | E2E p95 (ms) | Throughput (tok/s) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 16 | `e2_control` | 1,204 ± 56 | 223 ± 7 | 682 ± 74 | 16.4 ± 0.3 | 5,245 ± 216 | 843 ± 21 |
+| 16 | `e2_chunked_off` | 1,124 ± 12 (−7%) | 125 ± 2 (**−44%**) | 360 ± 7 (**−47%**) | 17.7 ± 0.2 (**+8%**) | 5,689 ± 41 (**+8%**) | 826 ± 9 (−2%) |
+| 16 | `e2_control_repeat` | 1,219 ± 14 (+1%) | 225 ± 3 (+1%) | 662 ± 4 (−3%) | 16.7 ± 0.4 (+2%) | 5,312 ± 96 (+1%) | 829 ± 10 (−2%) |
+| 64 | `e2_control` | 6,674 ± 45 | 244 ± 0 | 948 ± 3 | 49.2 ± 0.2 | 20,647 ± 119 | 1,091 ± 5 |
+| 64 | `e2_chunked_off` | 7,127 ± 15 (**+7%**) | 145 ± 2 (**−41%**) | 421 ± 2 (**−56%**) | 49.7 ± 0.1 (**+1%**) | 21,548 ± 38 (**+4%**) | 1,084 ± 2 (−1%) |
+| 64 | `e2_control_repeat` | 6,655 ± 38 (−0%) | 242 ± 1 (−1%) | 947 ± 3 (−0%) | 49.2 ± 0.1 (+0%) | 20,632 ± 67 (−0%) | 1,091 ± 3 (−0%) |
+
+Open loop, requests arriving at a fixed rate:
+
+| Requests/s | Run | TTFT p95 (ms) | Longest token gap p95 (ms) | TTFT p50 (ms) | ITL mean (ms) | E2E p95 (ms) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 2 | `e2_control` | 286 ± 71 | 182 ± 57 | 143 ± 3 | 11.3 ± 1.2 | 4,422 ± 708 |
+| 2 | `e2_chunked_off` | 270 ± 59 (−6%) | 119 ± 4 (−34%) | 143 ± 3 (−0%) | 11.3 ± 1.2 (−0%) | 4,425 ± 706 (+0%) |
+| 2 | `e2_control_repeat` | 287 ± 73 (+0%) | 181 ± 57 (−0%) | 143 ± 4 (−0%) | 11.4 ± 1.3 (+0%) | 4,419 ± 717 (−0%) |
+| 4 | `e2_control` | 431 ± 17 | 224 ± 5 | 197 ± 27 | 31.0 ± 8.1 | 10,554 ± 2,774 |
+| 4 | `e2_chunked_off` | 390 ± 17 (**−10%**) | 135 ± 6 (**−40%**) | 196 ± 33 (−1%) | 31.1 ± 8.1 (+0%) | 10,582 ± 2,775 (+0%) |
+| 4 | `e2_control_repeat` | 438 ± 33 (+2%) | 226 ± 4 (+1%) | 198 ± 30 (+1%) | 31.1 ± 8.1 (+0%) | 10,595 ± 2,786 (+0%) |
+
+![E2 p95 time to first token, closed loop](analysis/figures/e2_ttft_p95_closed_loop.png)
+
+![E2 longest token gap, closed loop](analysis/figures/e2_token_gap_closed_loop.png)
+
+![E2 median time to first token, closed loop](analysis/figures/e2_ttft_p50_closed_loop.png)
+
+![E2 p95 time to first token, open loop](analysis/figures/e2_ttft_p95_open_loop.png)
+
+- **The hypothesis did not hold for 1,024-token prompts.** Chunked prefill
+  was expected to shorten the stalls between tokens; instead the longest gap
+  was 41% to 44% shorter with it off (145 against 244 ms at 64 users, 125
+  against 223 at 16), and 34% to 40% shorter at fixed request rates.
+- **On p95 time to first token the result is mixed and small.** Chunked
+  prefill was 7% better at 64 users (6,674 against 7,127 ms), 10% worse at 4
+  requests/s (431 against 390 ms), and within noise at 16 users and at 2
+  requests/s.
+- **Median time to first token roughly halved with chunked prefill off in
+  closed loop** (948 to 421 ms at 64 users, 682 to 360 at 16) and did not
+  move at fixed request rates.
+- **Turning it off cost a little end to end:** p95 end-to-end latency rose 4%
+  to 8% in closed loop and inter-token latency 1% to 8%; throughput did not
+  change beyond noise.
+- **A likely reason, not confirmed.** E1 showed the longest token gap follows
+  the per-step token budget, and suggested the default budget is 2,048. A
+  1,024-token prompt fits inside that, so with chunked prefill on there is
+  nothing to split and a step can prefill two prompts, while with it off each
+  step appears to prefill one. That would give stalls about half as long with
+  it off, as measured. Prompts longer than the budget are where chunking
+  should help, and this experiment did not test them.
+- **The repeated control matched the first one.** `e2_control_repeat`, run
+  last, was within 3% of `e2_control` on every latency and throughput metric
+  and never beyond the noise floor. The 5% run-order offset seen in E1 did
+  not recur, so the differences above are attributable to the setting.
+- **Identical settings do not give identical outputs.** The repeated control
+  matched the first control on 98.6% of outputs, so about 1.4% differ between
+  two launches of the same config. Against that, chunked prefill off matched
+  on 90.2% in closed loop and 97.0% in open loop. vLLM warns that this model
+  "does not officially support disabling chunked prefill" and that doing so
+  "may cause the engine to crash or produce incorrect outputs"; nothing
+  crashed, and fingerprints cannot say whether the differing outputs are
+  wrong.
+
+No request failed, no setting was flagged as noisy, and every prompt was 1,024
+tokens on the server. The run took 34 minutes on the T4 at commit `8fa3e7a`.
 
 ### E5 and E6
 
