@@ -1,0 +1,46 @@
+model: Qwen/Qwen2.5-0.5B-Instruct
+dtype: float16
+seed: 0
+gpu_index: 0
+prompts:
+  file: data/prompts_short.jsonl
+  input_tokens: 128
+  num_prompts: 64
+max_new_tokens: 128
+warmup_batches: 3
+repeats: 3
+max_spread: 0.1
+monitor_interval_s: 0.5
+vllm:
+  gpu_memory_utilization: 0.9
+  max_model_len: 2048
+  enable_prefix_caching: false
+  max_num_batched_tokens: 1024
+mode: online
+backend: vllm
+concurrency:
+- 16
+- 64
+num_requests: 128
+server:
+  launch: true
+  host: 127.0.0.1
+  port: 8000
+  startup_timeout_s: 600
+open_loop:
+  request_rates:
+  - 8
+  - 16
+  - 24
+  - 32
+  num_requests: 256
+  warmup_requests: 16
+cpu:
+  server_cores:
+  - 0
+  - 1
+  - 2
+  client_cores:
+  - 3
+scrape_metrics: true
+name: e1_tokens_1024

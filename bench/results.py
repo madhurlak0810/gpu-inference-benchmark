@@ -1,7 +1,9 @@
 """On-disk results for one run: results/<run>/{raw,summary,gpu_samples}.csv.
 
 Rows are appended after every repeat, so a session that dies mid-run loses at
-most the repeat in progress and the next invocation resumes after it.
+most the repeat in progress and the next invocation resumes after it. A run
+that sweeps a second setting keeps it in a sibling store with suffixed files
+(the open-loop sweep writes summary_open.csv and so on).
 """
 from __future__ import annotations
 
@@ -12,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-FILES = ("raw.csv", "summary.csv", "gpu_samples.csv")
+FILES = ("raw.csv", "summary.csv", "gpu_samples.csv", "server_metrics.csv")
 
 
 def now() -> str:
@@ -25,19 +27,28 @@ def percentiles(values_ms: list[float], name: str) -> dict:
 
 
 class RunStore:
-    def __init__(self, out_dir: Path, key: str):
+    def __init__(self, out_dir: Path, key: str, suffix: str = ""):
         self.dir = Path(out_dir)
-        self.key = key  # the swept setting: batch_size (offline) or concurrency (online)
+        self.key = key  # the swept setting: batch_size, concurrency or request_rate
+        self.suffix = suffix
         self.dir.mkdir(parents=True, exist_ok=True)
+
+    def sibling(self, key: str, suffix: str) -> "RunStore":
+        """A store for a second sweep of the same run, in the same directory."""
+        return RunStore(self.dir, key, suffix)
+
+    def _path(self, filename: str) -> Path:
+        stem, ext = filename.rsplit(".", 1)
+        return self.dir / f"{stem}{self.suffix}.{ext}"
 
     def clear(self) -> None:
         for name in FILES:
-            (self.dir / name).unlink(missing_ok=True)
+            self._path(name).unlink(missing_ok=True)
 
     def append(self, filename: str, rows: list[dict]) -> None:
         if not rows:
             return
-        path = self.dir / filename
+        path = self._path(filename)
         is_new = not path.exists()
         with path.open("a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=list(rows[0]))
@@ -46,7 +57,7 @@ class RunStore:
             writer.writerows(rows)
 
     def _summary(self) -> pd.DataFrame:
-        path = self.dir / "summary.csv"
+        path = self._path("summary.csv")
         return pd.read_csv(path) if path.exists() else pd.DataFrame()
 
     def completed(self) -> set[tuple[int, int]]:
@@ -75,7 +86,7 @@ class RunStore:
     def drop(self, settings: list[int]) -> None:
         """Forget every row of the given settings so they run again."""
         for name in FILES:
-            path = self.dir / name
+            path = self._path(name)
             if path.exists():
                 df = pd.read_csv(path)
                 df[~df[self.key].isin(settings)].to_csv(path, index=False)

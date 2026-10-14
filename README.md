@@ -6,8 +6,12 @@ and vLLM on one NVIDIA T4, across batch sizes and 1 to 64 concurrent users.
 Every reported number comes from a CSV under `results/` and one command
 reproduces it.
 
-> **Status:** the baseline measurements below are complete. The optimization
-> experiment (quantization, prefix caching or batching limits) is not done yet.
+> **Status:** the baseline measurements below are complete. Of the
+> optimization experiments, E4 (CUDA graphs against eager), E3 (prefix
+> caching), E1 (scheduler limits) and E2 (chunked prefill) are measured; E5
+> and E6 are not set up yet. See
+> [Optimization experiments](#optimization-experiments) for the plan and its
+> checkpoints.
 
 ## Findings
 
@@ -31,6 +35,32 @@ setting was 2.3%.
   2,291 ms). The wait for the first token grew far more than the gap between
   tokens: p95 time to first token went from 23 to 517 ms, inter-token latency
   from 5.9 to 15.0 ms.
+
+- **Compilation explains the small-batch gap** (optimization experiment E4).
+  With `torch.compile` and CUDA graphs turned off, vLLM ran at 40 tokens/s at
+  batch 1, 1.2× Hugging Face instead of 4.8×. With a static KV cache and
+  `torch.compile`, Hugging Face `generate()` reached 120 tokens/s, 3.5× its
+  own baseline and 73% of vLLM. Details are under
+  [E4](#e4-cuda-graphs-against-eager).
+
+- **Prefix caching cut the wait for the first token at a fixed request rate**
+  (optimization experiment E3). With prompts sharing half their 1,024 tokens,
+  median time to first token fell 26% at 2 requests/s and 56% at 6. With a
+  fixed number of users the gain showed up as 20% to 30% more throughput
+  instead. Details are under [E3](#e3-prefix-caching).
+
+- **Limiting concurrent sequences made tail latency worse, not better**
+  (optimization experiment E1). At 64 users, capping the running batch at 16
+  sequences halved throughput and doubled p95 end-to-end latency; vLLM's
+  default scheduler limits were the best setting measured on both. Details
+  are under [E1](#e1-scheduler-limits).
+
+- **Chunked prefill did not steady token pacing on 1,024-token prompts**
+  (optimization experiment E2). The longest gap between two tokens was 41% to
+  44% shorter with it off, and its effect on p95 time to first token was
+  within 10% either way. The likely reason is that these prompts fit inside
+  one scheduler step, leaving nothing to split. Details are under
+  [E2](#e2-chunked-prefill).
 
 One measured clue to the small-batch gap: at batch 1 on the 0.5B model, Hugging
 Face kept the GPU 38% busy and vLLM kept it 99% busy (`mean_util_pct` in the
@@ -78,7 +108,9 @@ All 1,536 timed requests succeeded.
 
 ## Charts
 
-`python -m analysis.plots` regenerates every chart from the CSVs.
+`python -m analysis.plots` regenerates every chart from the CSVs, including
+the experiment charts shown under
+[Optimization experiments](#optimization-experiments).
 
 ![Offline throughput by batch size](analysis/figures/throughput_vs_batch_size.png)
 
@@ -87,6 +119,424 @@ All 1,536 timed requests succeeded.
 ![p95 end-to-end latency by concurrent users](analysis/figures/p95_latency_vs_concurrency.png)
 
 ![p95 time to first token by concurrent users](analysis/figures/ttft_vs_concurrency.png)
+
+## Optimization experiments
+
+The baseline points at three bottlenecks: requests queue before their first
+token, Hugging Face leaves the GPU idle at small batches, and memory caps
+concurrency. Each experiment below changes one setting against a control run
+measured in the same session, and is judged on the metric its hypothesis names.
+
+**E4, E3, E1 and E2 have been measured on the T4.** E5 and E6 are not set up
+yet.
+
+### Checkpoints
+
+Harness (shared by every experiment):
+
+- [x] Open-loop load: Poisson arrivals at fixed request rates, next to the
+      closed-loop mode (`open_loop` in a config; results in `summary_open.csv`)
+- [x] Server pinned to cores 0–2 and the load client to core 3, with each
+      side's CPU utilization recorded per repeat (`cpu`)
+- [x] vLLM's `/metrics` scraped during each repeat: running and queued
+      requests, KV cache use (`scrape_metrics`; samples in `server_metrics.csv`)
+- [x] Output fingerprint per request (online) or batch (offline), to check
+      that an optimization leaves greedy outputs unchanged
+- [x] Longest gap between two streamed tokens per request, for stalls that
+      the mean inter-token latency hides
+- [x] `python -m analysis.compare <experiment>`: each run against its control,
+      with the noise-floor rule applied
+- [x] `scripts/kaggle_job.py`: start a run on a Kaggle T4 and fetch its results
+- [x] `--smoke` of E4 on the T4 (all five configs)
+- [x] `--smoke` of E3 on the T4: `taskset` pinning, the `/metrics` gauge
+      names, open-loop load and exact 1,024-token prompts all confirmed
+      against vLLM 0.31.0
+- [x] `--smoke` of E1 on the T4: vLLM 0.31.0 accepts `max_num_seqs` and
+      `max_num_batched_tokens` as written
+- [x] `--smoke` of E2 on the T4: `enable_chunked_prefill: false` is accepted,
+      with a warning from vLLM that the model does not officially support it
+- [x] The `vllm_online` baseline (1,802 and 3,629 tokens/s at 16 and 64
+      users) is reproduced with pinning and scraping on: the seven E1 runs
+      after the control gave 1,799 to 1,823 and 3,580 to 3,653 where their
+      limit does not bind. The control itself, which ran first, came out 5%
+      higher (1,896 and 3,814); see [E1](#e1-scheduler-limits)
+
+Experiments, in the order they will run:
+
+| # | Experiment | Setup | Smoke on T4 | Measured | Written up |
+| --- | --- | :---: | :---: | :---: | :---: |
+| E4 | CUDA graphs against eager | ✅ | ✅ | ✅ | ✅ |
+| E3 | Prefix caching | ✅ | ✅ | ✅ | ✅ |
+| E1 | Scheduler limits | ✅ | ✅ | ✅ | ✅ |
+| E2 | Chunked prefill | ✅ | ✅ | ✅ | ✅ |
+| E5 | 4-bit weight quantization | ☐ | ☐ | ☐ | ☐ |
+| E6 | Speculative decoding | ☐ | ☐ | ☐ | ☐ |
+
+After the runs: charts per experiment, and a table of which setting to use for
+low-latency, high-throughput and memory-limited serving.
+
+### How a result is judged
+
+- **Noise floor.** A change counts only if it is larger than twice the larger
+  standard deviation of the two runs compared (3 repeats each).
+  `analysis.compare` prints such changes in bold.
+- **Same outputs.** Decoding is greedy, so E1 to E4 should return the same
+  text as their control. `analysis.compare` reports the share of outputs whose
+  fingerprint matches; a mismatch is reported, not hidden.
+- **No hidden regressions.** Every row carries throughput, time to first
+  token, inter-token latency, p95 end-to-end latency and peak memory, so a
+  gain on one that costs another is visible.
+
+### E4: CUDA graphs against eager
+
+**Symptom.** At batch 1, vLLM ran 5.1× faster than Hugging Face (168 against
+33 tokens/s) and kept the GPU 99% busy against 38%.
+
+**Hypothesis.** Most of that lead comes from removing per-token launch
+overhead. Turning CUDA graphs off should narrow vLLM's lead; a static KV cache
+and `torch.compile` should close part of the gap from the Hugging Face side.
+
+| Config | Change from its control |
+| --- | --- |
+| `e4_hf_control` | Hugging Face as in the baseline: batch sizes 1 and 8, 32 prompts |
+| `e4_hf_static` | `hf.cache_implementation: static` |
+| `e4_hf_compiled` | Static cache plus `hf.compile: true`; compilation falls in the untimed warm-up |
+| `e4_vllm_control` | vLLM with its defaults |
+| `e4_vllm_eager` | `vllm.enforce_eager: true` |
+
+**Primary metrics.** Tokens/s and GPU utilization at batch 1.
+
+**Results.** Printed by `python -m analysis.compare e4`: mean ± standard
+deviation over 3 repeats, with the change from the run's control in brackets.
+Every change shown is beyond the noise floor.
+
+| Batch | Run | Throughput (tok/s) | GPU utilization (%) | p95 latency (ms) |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | `e4_hf_control` | 34 ± 0 | 38 ± 0 | 3,833 ± 19 |
+| 1 | `e4_hf_static` | 37 ± 0 (+9%) | 38 ± 0 | 3,544 ± 9 (−8%) |
+| 1 | `e4_hf_compiled` | 120 ± 1 (+254%) | 81 ± 0 (+111%) | 1,083 ± 18 (−72%) |
+| 1 | `e4_vllm_control` | 163 ± 4 | 99 ± 0 | 813 ± 35 |
+| 1 | `e4_vllm_eager` | 40 ± 0 (−76%) | 32 ± 0 (−67%) | 3,305 ± 5 (+307%) |
+| 8 | `e4_hf_control` | 263 ± 0 | 42 ± 0 | 3,944 ± 26 |
+| 8 | `e4_hf_static` | 290 ± 2 (+11%) | 39 ± 0 (−7%) | 3,551 ± 38 (−10%) |
+| 8 | `e4_hf_compiled` | 788 ± 3 (+200%) | 86 ± 1 (+103%) | 1,307 ± 7 (−67%) |
+| 8 | `e4_vllm_control` | 1,133 ± 3 | 99 ± 0 | 906 ± 1 |
+| 8 | `e4_vllm_eager` | 313 ± 2 (−72%) | 31 ± 0 (−68%) | 3,312 ± 38 (+266%) |
+
+![E4 throughput by run](analysis/figures/e4_throughput.png)
+
+![E4 GPU utilization by run](analysis/figures/e4_gpu_utilization.png)
+
+- **The hypothesis held.** Without graph capture and compilation, vLLM ran at
+  40 tokens/s at batch 1, 1.2× Hugging Face's 34, against 4.8× with them on.
+  Its GPU utilization fell from 99% to 32%, below Hugging Face's 38%.
+- **Compiling closed most of the gap from the Hugging Face side.**
+  `generate()` with a static cache and `torch.compile` reached 120 tokens/s at
+  batch 1, 3.5× its control and 73% of vLLM, with the GPU 81% busy. At batch 8
+  it reached 788 tokens/s, 70% of vLLM.
+- **The static cache alone gave 9% to 11%.** It left GPU utilization where it
+  was; the gain came with compilation.
+- **What `enforce_eager` turns off.** In vLLM 0.31.0 the flag disables
+  `torch.compile` and kernel warm-up as well as CUDA graphs, so this run
+  measures the three together and cannot credit CUDA graphs alone.
+- **Outputs were not all identical.** Each run produced the same tokens on
+  every repeat, but against its control a few batches differed: 2 of the 36
+  distinct batches for each Hugging Face run and 3 of 36 for eager vLLM (102
+  and 99 of 108 batch fingerprints matched). The likely cause is fp16
+  near-ties in greedy decoding resolving differently on a different compute
+  path; that has not been confirmed by inspecting the tokens, since only
+  fingerprints were recorded.
+
+The controls match the baseline (34 against 33 tokens/s for Hugging Face at
+batch 1, 163 against 168 for vLLM) on 32 prompts instead of 64. The run took
+31 minutes on the T4 at commit `5a658eb`; compilation fell in the untimed
+warm-up and is not in these figures.
+
+### E3: Prefix caching
+
+**Symptom.** From 1 to 64 users, median time to first token grew 16× (21 to
+335 ms) while inter-token latency grew 2.5×: the wait is in prefill.
+
+**Hypothesis.** When prompts share a system prompt, caching it removes half of
+each prefill and time to first token drops.
+
+**Workload.** 1,024-token prompts whose first 512 tokens are identical
+(`data/prompts_shared_prefix.json`). Every request gets a suffix that has never
+been sent before, built at run time from words that are one token each. The
+baseline prompt sets repeat across warm-ups and repeats, so with a cache on
+they would hit on the whole prompt and overstate the gain; here the shared
+prefix is the only thing a cache can reuse.
+
+| Config | Change from its control |
+| --- | --- |
+| `e3_control` | The shared-prefix workload, prefix caching off |
+| `e3_prefix_cache` | `vllm.enable_prefix_caching: true` |
+
+**Primary metric.** Time to first token, p50.
+
+**Results.** Printed by `python -m analysis.compare e3`: mean ± standard
+deviation over 3 repeats, with the change from the control in brackets. Bold
+marks a change beyond the noise floor.
+
+Open loop, requests arriving at a fixed rate:
+
+| Requests/s | Run | TTFT p50 (ms) | TTFT p95 (ms) | ITL mean (ms) | E2E p95 (ms) | Throughput (tok/s) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 2 | `e3_control` | 139 ± 0 | 279 ± 65 | 9.6 ± 0.8 | 2,020 ± 416 | 251 ± 26 |
+| 2 | `e3_prefix_cache` | 103 ± 1 (**−26%**) | 171 ± 36 (−39%) | 8.4 ± 0.5 (−12%) | 1,620 ± 283 (−20%) | 252 ± 27 (+0%) |
+| 6 | `e3_control` | 365 ± 24 | 753 ± 61 | 49.8 ± 8.0 | 9,439 ± 2,326 | 681 ± 6 |
+| 6 | `e3_prefix_cache` | 160 ± 13 (**−56%**) | 318 ± 44 (**−58%**) | 24.3 ± 2.7 (**−51%**) | 4,431 ± 500 (**−53%**) | 729 ± 16 (**+7%**) |
+
+Closed loop, a fixed number of users:
+
+| Users | Run | TTFT p50 (ms) | TTFT p95 (ms) | ITL mean (ms) | E2E p95 (ms) | Throughput (tok/s) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 16 | `e3_control` | 653 ± 20 | 1,206 ± 39 | 20.7 ± 0.4 | 3,679 ± 107 | 626 ± 15 |
+| 16 | `e3_prefix_cache` | 668 ± 5 (+2%) | 997 ± 47 (**−17%**) | 16.5 ± 0.3 (**−20%**) | 2,928 ± 29 (**−20%**) | 754 ± 6 (**+20%**) |
+| 64 | `e3_control` | 964 ± 6 | 6,751 ± 15 | 66.3 ± 0.2 | 16,610 ± 53 | 751 ± 2 |
+| 64 | `e3_prefix_cache` | 1,186 ± 4 (**+23%**) | 4,524 ± 13 (**−33%**) | 51.6 ± 0.2 (**−22%**) | 11,796 ± 59 (**−29%**) | 975 ± 1 (**+30%**) |
+
+![E3 time to first token, open loop](analysis/figures/e3_ttft_open_loop.png)
+
+![E3 time to first token, closed loop](analysis/figures/e3_ttft_closed_loop.png)
+
+![E3 throughput, closed loop](analysis/figures/e3_throughput_closed_loop.png)
+
+- **At a fixed request rate the hypothesis held.** Median time to first token
+  fell 26% at 2 requests/s (139 to 103 ms) and 56% at 6 requests/s (365 to
+  160 ms).
+- **With a fixed number of users it did not, on the primary metric.** Median
+  time to first token was unchanged at 16 users and 23% higher at 64. The
+  gain went into throughput instead: 20% more tokens/s at 16 users and 30% at
+  64, with p95 time to first token down 17% and 33% and p95 end-to-end
+  latency down 20% and 29%. Closed-loop users send their next request as soon
+  as the last one returns, so the faster server was sent more requests (7.6
+  against 5.9 per second at 64 users) and the queue in front of it stayed
+  full. This is the wave effect the open-loop mode was added to remove.
+- **Part of the 6 requests/s gain is the control saturating.** The control's
+  closed-loop ceiling was 5.9 requests/s, and at an offered 6 it completed
+  5.3; with the cache on the ceiling was 7.6. At 2 requests/s neither server
+  was near its limit, so the 26% there is the cleaner estimate of what the
+  cache saves per request.
+- **Peak KV cache use fell by 42% to 71%** (from 7.3% to 4.1% at 64 users),
+  since the shared prefix is stored once.
+- **Outputs were not all identical:** 715 of 768 closed-loop outputs and 524
+  of 576 open-loop outputs matched the control (93% and 91%). As in E4, only
+  fingerprints were recorded, so the cause is unconfirmed.
+- **The noise flag at 2 requests/s is an artifact.** Both runs were flagged
+  for a throughput spread just over 10% there. Below saturation, open-loop
+  throughput is set by the arrival schedule, which differs between repeats
+  and is identical between the two runs (251 ± 26 against 252 ± 27), so the
+  spread is not measurement noise and the setting was not rerun.
+
+No request failed, every prompt was 1,024 tokens on the server, and the
+client core stayed under 15% busy. The run took 21 minutes on the T4 at commit
+`a7f33f7`.
+
+### E1: Scheduler limits
+
+**Symptom.** At 64 users the server reached 3,629 tokens/s at a p95
+end-to-end latency of 2,291 ms, with a p95 time to first token of 517 ms.
+
+**Hypothesis.** Capping how many sequences run at once trades peak throughput
+for lower tail latency. The per-step token budget decides how fast a wave of
+new prompts is prefilled: 64 prompts of 128 tokens are 8,192 tokens.
+
+| Config | Change from its control |
+| --- | --- |
+| `e1_control` | vLLM's default scheduler limits |
+| `e1_seqs_016`, `_032`, `_064`, `_128` | `vllm.max_num_seqs` |
+| `e1_tokens_1024`, `_4096`, `_8192` | `vllm.max_num_batched_tokens` |
+
+**Primary metrics.** p95 end-to-end latency and throughput at 64 users, with
+queued requests from `/metrics` to show where the time went.
+
+**Results.** Printed by `python -m analysis.compare e1`, which also has the
+16-user and open-loop rows: mean ± standard deviation over 3 repeats, with the
+change from the control in brackets. Closed loop at 64 users:
+
+| Run | Throughput (tok/s) | E2E p95 (ms) | TTFT p50 (ms) | ITL mean (ms) | Longest token gap p95 (ms) | Queued requests (mean) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `e1_control` | 3,814 ± 19 | 2,169 ± 15 | 331 ± 19 | 14.1 ± 0.1 | 100 ± 1 | 0.5 |
+| `e1_seqs_016` | 1,842 ± 16 (−52%) | 4,521 ± 47 (+108%) | 3,376 ± 27 (+920%) | 7.9 ± 0.1 (−44%) | 54 ± 3 (−46%) | 33.8 |
+| `e1_seqs_032` | 2,735 ± 28 (−28%) | 3,100 ± 29 (+43%) | 1,572 ± 15 (+375%) | 10.5 ± 0.1 (−26%) | 104 ± 1 (+4%) | 22.6 |
+| `e1_seqs_064` | 3,580 ± 50 (−6%) | 2,310 ± 38 (+7%) | 367 ± 21 (+11%) | 15.0 ± 0.2 (+6%) | 111 ± 2 (+10%) | 0.9 |
+| `e1_seqs_128` | 3,605 ± 34 (−5%) | 2,304 ± 20 (+6%) | 365 ± 9 (+10%) | 14.9 ± 0.1 (+6%) | 111 ± 1 (+10%) | 1.4 |
+| `e1_tokens_1024` | 3,653 ± 54 (−4%) | 2,339 ± 18 (+8%) | 305 ± 28 (−8%) | 14.9 ± 0.1 (+6%) | 57 ± 2 (−43%) | 2.8 |
+| `e1_tokens_4096` | 3,611 ± 33 (−5%) | 2,287 ± 17 (+5%) | 411 ± 42 (+24%) | 14.7 ± 0.1 (+4%) | 201 ± 3 (+100%) | 0.2 |
+| `e1_tokens_8192` | 3,616 ± 25 (−5%) | 2,290 ± 13 (+6%) | 406 ± 72 (+23%) | 14.6 ± 0.1 (+4%) | 240 ± 16 (+139%) | 0.0 |
+
+![E1 throughput, closed loop](analysis/figures/e1_throughput_closed_loop.png)
+
+![E1 p95 latency, closed loop](analysis/figures/e1_latency_closed_loop.png)
+
+![E1 p95 latency by request rate](analysis/figures/e1_latency_vs_request_rate.png)
+
+![E1 longest token gap by token budget](analysis/figures/e1_token_gap_closed_loop.png)
+
+- **The hypothesis did not hold: no limit lowered tail latency.** A cap below
+  the number of users cost both metrics at once. At 64 users,
+  `max_num_seqs: 16` halved throughput (3,814 to 1,842 tokens/s) and doubled
+  p95 end-to-end latency (2,169 to 4,521 ms); a cap of 32 cost 28% and added
+  43%. The default limits were the best setting measured on both.
+- **A cap moves the wait from between tokens to before the first one.** With
+  16 sequences running, tokens came every 7.9 ms instead of 14.1, but 34
+  requests on average sat in the queue and median time to first token went
+  from 331 to 3,376 ms. A cap helps only if steady token pacing matters more
+  than the wait to start.
+- **Open loop shows the same thing at a fixed request rate.** At 16
+  requests/s a cap of 16 already queues (p95 end-to-end 3,510 ms against
+  1,309); at 32 requests/s p95 was 11,246 ms with a cap of 16, 5,629 with 32,
+  3,088 with 64 and 2,168 with the defaults. A cap of 128 was
+  indistinguishable from the defaults on throughput and end-to-end latency.
+- **The token budget sets how long decoding stalls, and little else.**
+  Throughput and p95 end-to-end latency stayed within 8% of the control for
+  all three budgets. The longest gap between two tokens followed the
+  budget: 57 ms at 1,024 tokens, 100 at the default, 201 at 4,096 and 240 at
+  8,192. The default sitting between 1,024 and 4,096 suggests it is 2,048,
+  but the server log does not print it.
+- **The control ran about 5% faster than everything else, so small closed-loop
+  differences are not attributable to a setting.** Every other run, including
+  those whose limit cannot bind (a cap of 128 with 16 users), gave 4% to 6%
+  less throughput than the control, and those runs match the published
+  baseline while the control exceeds it. The control was the first server
+  launched in the session. The cause is not established; a cooler GPU at the
+  start is one candidate. The noise floor is computed from repeats within one
+  server launch and does not cover this, so changes of this size are marked
+  as beyond noise by `analysis.compare` without being real effects of the
+  setting. E2 repeated its control at the end of the session to test for the
+  same offset and did not find it.
+- **Caps of 64 or lower raised light-load latency too.** At 8 requests/s,
+  where about 8 requests are in flight and no cap binds, median time to first
+  token was 42 to 43 ms with caps of 16, 32 and 64 against 33 ms for the
+  control and 32 ms for a cap of 128. The cause is not established.
+- **Outputs were not all identical:** 93% to 97% of outputs matched the
+  control's in every run, as in E4 and E3.
+
+No request failed and no setting was flagged as noisy. The run took 56 minutes
+on the T4 at commit `14ceba7`.
+
+### E2: Chunked prefill
+
+**Symptom.** The same queueing before the first token. The online baseline
+used 128-token prompts only, so long prompts under load are unmeasured so far.
+
+**Hypothesis.** A 1,024-token prefill done in one step holds up every running
+decode. Splitting it into chunks lets decodes keep running, which lowers p95
+time to first token and steadies inter-token latency.
+
+| Config | Change from its control |
+| --- | --- |
+| `e2_control` | 1,024 tokens in, 256 out, `vllm.enable_chunked_prefill: true` |
+| `e2_chunked_off` | `vllm.enable_chunked_prefill: false` |
+| `e2_control_repeat` | Nothing: the control again, run last, to show how much the order of the runs moves the numbers (see [E1](#e1-scheduler-limits)) |
+
+**Primary metrics.** Time to first token p95, and the longest gap between two
+tokens p95.
+
+**Results.** Printed by `python -m analysis.compare e2`: mean ± standard
+deviation over 3 repeats, with the change from the control in brackets. Bold
+marks a change beyond the noise floor. The control has chunked prefill on, so
+a negative change means turning it off lowered the number.
+
+Closed loop, a fixed number of users:
+
+| Users | Run | TTFT p95 (ms) | Longest token gap p95 (ms) | TTFT p50 (ms) | ITL mean (ms) | E2E p95 (ms) | Throughput (tok/s) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 16 | `e2_control` | 1,204 ± 56 | 223 ± 7 | 682 ± 74 | 16.4 ± 0.3 | 5,245 ± 216 | 843 ± 21 |
+| 16 | `e2_chunked_off` | 1,124 ± 12 (−7%) | 125 ± 2 (**−44%**) | 360 ± 7 (**−47%**) | 17.7 ± 0.2 (**+8%**) | 5,689 ± 41 (**+8%**) | 826 ± 9 (−2%) |
+| 16 | `e2_control_repeat` | 1,219 ± 14 (+1%) | 225 ± 3 (+1%) | 662 ± 4 (−3%) | 16.7 ± 0.4 (+2%) | 5,312 ± 96 (+1%) | 829 ± 10 (−2%) |
+| 64 | `e2_control` | 6,674 ± 45 | 244 ± 0 | 948 ± 3 | 49.2 ± 0.2 | 20,647 ± 119 | 1,091 ± 5 |
+| 64 | `e2_chunked_off` | 7,127 ± 15 (**+7%**) | 145 ± 2 (**−41%**) | 421 ± 2 (**−56%**) | 49.7 ± 0.1 (**+1%**) | 21,548 ± 38 (**+4%**) | 1,084 ± 2 (−1%) |
+| 64 | `e2_control_repeat` | 6,655 ± 38 (−0%) | 242 ± 1 (−1%) | 947 ± 3 (−0%) | 49.2 ± 0.1 (+0%) | 20,632 ± 67 (−0%) | 1,091 ± 3 (−0%) |
+
+Open loop, requests arriving at a fixed rate:
+
+| Requests/s | Run | TTFT p95 (ms) | Longest token gap p95 (ms) | TTFT p50 (ms) | ITL mean (ms) | E2E p95 (ms) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 2 | `e2_control` | 286 ± 71 | 182 ± 57 | 143 ± 3 | 11.3 ± 1.2 | 4,422 ± 708 |
+| 2 | `e2_chunked_off` | 270 ± 59 (−6%) | 119 ± 4 (−34%) | 143 ± 3 (−0%) | 11.3 ± 1.2 (−0%) | 4,425 ± 706 (+0%) |
+| 2 | `e2_control_repeat` | 287 ± 73 (+0%) | 181 ± 57 (−0%) | 143 ± 4 (−0%) | 11.4 ± 1.3 (+0%) | 4,419 ± 717 (−0%) |
+| 4 | `e2_control` | 431 ± 17 | 224 ± 5 | 197 ± 27 | 31.0 ± 8.1 | 10,554 ± 2,774 |
+| 4 | `e2_chunked_off` | 390 ± 17 (**−10%**) | 135 ± 6 (**−40%**) | 196 ± 33 (−1%) | 31.1 ± 8.1 (+0%) | 10,582 ± 2,775 (+0%) |
+| 4 | `e2_control_repeat` | 438 ± 33 (+2%) | 226 ± 4 (+1%) | 198 ± 30 (+1%) | 31.1 ± 8.1 (+0%) | 10,595 ± 2,786 (+0%) |
+
+![E2 p95 time to first token, closed loop](analysis/figures/e2_ttft_p95_closed_loop.png)
+
+![E2 longest token gap, closed loop](analysis/figures/e2_token_gap_closed_loop.png)
+
+![E2 median time to first token, closed loop](analysis/figures/e2_ttft_p50_closed_loop.png)
+
+![E2 p95 time to first token, open loop](analysis/figures/e2_ttft_p95_open_loop.png)
+
+- **The hypothesis did not hold for 1,024-token prompts.** Chunked prefill
+  was expected to shorten the stalls between tokens; instead the longest gap
+  was 41% to 44% shorter with it off (145 against 244 ms at 64 users, 125
+  against 223 at 16), and 34% to 40% shorter at fixed request rates.
+- **On p95 time to first token the result is mixed and small.** Chunked
+  prefill was 7% better at 64 users (6,674 against 7,127 ms), 10% worse at 4
+  requests/s (431 against 390 ms), and within noise at 16 users and at 2
+  requests/s.
+- **Median time to first token roughly halved with chunked prefill off in
+  closed loop** (948 to 421 ms at 64 users, 682 to 360 at 16) and did not
+  move at fixed request rates.
+- **Turning it off cost a little end to end:** p95 end-to-end latency rose 4%
+  to 8% in closed loop and inter-token latency 1% to 8%; throughput did not
+  change beyond noise.
+- **A likely reason, not confirmed.** E1 showed the longest token gap follows
+  the per-step token budget, and suggested the default budget is 2,048. A
+  1,024-token prompt fits inside that, so with chunked prefill on there is
+  nothing to split and a step can prefill two prompts, while with it off each
+  step appears to prefill one. That would give stalls about half as long with
+  it off, as measured. Prompts longer than the budget are where chunking
+  should help, and this experiment did not test them.
+- **The repeated control matched the first one.** `e2_control_repeat`, run
+  last, was within 3% of `e2_control` on every latency and throughput metric
+  and never beyond the noise floor. The 5% run-order offset seen in E1 did
+  not recur, so the differences above are attributable to the setting.
+- **Identical settings do not give identical outputs.** The repeated control
+  matched the first control on 98.6% of outputs, so about 1.4% differ between
+  two launches of the same config. Against that, chunked prefill off matched
+  on 90.2% in closed loop and 97.0% in open loop. vLLM warns that this model
+  "does not officially support disabling chunked prefill" and that doing so
+  "may cause the engine to crash or produce incorrect outputs"; nothing
+  crashed, and fingerprints cannot say whether the differing outputs are
+  wrong.
+
+No request failed, no setting was flagged as noisy, and every prompt was 1,024
+tokens on the server. The run took 34 minutes on the T4 at commit `8fa3e7a`.
+
+### E5 and E6
+
+Not set up yet. E5 serves a 4-bit AWQ or GPTQ build of Qwen2.5-1.5B to free
+memory for the KV cache, with a quality check against fp16. E6 uses the 0.5B
+model to draft tokens for the 1.5B (speculative decoding); the two share a
+tokenizer.
+
+### Running them
+
+Every optimization config extends `configs/_opt.yaml`, the online baseline
+with the measurement changes on, or an offline baseline config for E4. Run one
+like any other experiment:
+
+```bash
+python -m bench.run configs/e1_seqs_016.yaml --smoke   # check it starts
+python -m bench.run configs/e1_seqs_016.yaml
+python -m analysis.compare e1
+```
+
+Or run a whole experiment on a Kaggle T4 from a terminal, with the
+[Kaggle CLI](https://github.com/Kaggle/kaggle-cli) installed and logged in:
+
+```bash
+python scripts/kaggle_job.py push e4 --smoke   # a few minutes: every e4 config, tiny
+python scripts/kaggle_job.py push e4           # the real run
+python scripts/kaggle_job.py status e4
+python scripts/kaggle_job.py fetch e4          # copies the run into results/
+```
+
+`push` starts a private kernel that clones this repo at the current commit, so
+the commit has to be on GitHub first.
 
 ## Methodology
 
@@ -210,5 +660,7 @@ does not need to be run again.
 - Offline latency percentiles are over batches, and at batch size 64 a repeat
   is a single batch.
 
-Next: one optimization experiment (AWQ 4-bit quantization, prefix caching, or
-batching limits) measured against the `vllm_online` baseline.
+Next: the [optimization experiments](#optimization-experiments). Their harness
+adds open-loop load and client pinning, which address the two limitations
+above about wave arrivals and the shared machine; the baseline numbers
+themselves are unchanged.

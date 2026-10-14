@@ -1,0 +1,4 @@
+# E3: the same workload with vLLM's prefix cache on.
+extends: e3_control.yaml
+vllm:
+  enable_prefix_caching: true

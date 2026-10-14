@@ -28,8 +28,10 @@ def _smoke(cfg: dict) -> dict:
     if cfg["mode"] == "offline":
         cfg["batch_sizes"] = [1, 4]
     else:
-        cfg["concurrency"] = [1, 4]
+        cfg["concurrency"] = [1, 4] if cfg["concurrency"] else []
         cfg["num_requests"] = 8
+        if cfg.get("open_loop"):
+            cfg["open_loop"].update(request_rates=[4], num_requests=8, warmup_requests=4)
     return cfg
 
 
@@ -65,18 +67,25 @@ def main() -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg["gpu_index"])
 
     store = RunStore(results_dir / cfg["name"], SWEEP_KEY[cfg["mode"]])
+    stores = [store]
+    if cfg["mode"] == "online" and cfg.get("open_loop"):
+        from .online import open_store
+        stores.append(open_store(store))
     env = env_info.collect(cfg["gpu_index"])
     if args.overwrite or args.smoke:
-        store.clear()
+        for s in stores:
+            s.clear()
     else:
         _check_resumable(store.dir, cfg, env)
     if args.redo_noisy:
-        noisy = store.noisy(cfg["max_spread"])
-        if not noisy:
+        noisy = {s: s.noisy(cfg["max_spread"]) for s in stores}
+        if not any(noisy.values()):
             print(f"[{cfg['name']}] nothing is noisy")
             return  # before the model loads
-        print(f"[{cfg['name']}] rerunning {store.key} in {noisy}")
-        store.drop(noisy)
+        for s, settings in noisy.items():
+            if settings:
+                print(f"[{cfg['name']}] rerunning {s.key} in {settings}")
+                s.drop(settings)
 
     (store.dir / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
     (store.dir / "env.json").write_text(json.dumps(env, indent=2) + "\n", encoding="utf-8")

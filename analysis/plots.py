@@ -1,8 +1,9 @@
 """Regenerate every chart from results/: `python -m analysis.plots`.
 
-Each chart is a sweep (batch size or concurrent users) on a log-2 x axis, one
-panel per model and prompt setting, with the mean across repeats as the line
-and ± 1 standard deviation as the bars.
+Each baseline chart is a sweep (batch size or concurrent users) on a log-2 x
+axis, one panel per model and prompt setting, with the mean across repeats as
+the line and ± 1 standard deviation as the bars. Each optimization experiment
+gets bar charts instead: one bar per run, one panel per swept setting.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 
 from bench.config import REPO_ROOT
@@ -46,7 +48,80 @@ CHARTS = [
     ("online", "ttft_p95_ms", "run", "p95 time to first token by concurrent users",
      "p95 time to first token (ms)", "ttft_vs_concurrency.png", ""),
 ]
-X_LABEL = {"offline": "Batch size", "online": "Concurrent users"}
+X_LABEL = {"offline": "Batch size", "online": "Concurrent users", "online_open": "Requests per second"}
+
+# Experiment bar charts: experiment, mode, metric, title, x label, file, note, runs (None = all).
+EXPERIMENT_CHARTS = [
+    ("e4", "offline", "throughput_tok_s", "E4: throughput with and without compilation",
+     "Generated tokens per second", "e4_throughput.png",
+     "vLLM's eager mode turns off torch.compile and kernel warm-up as well as CUDA graphs.", None),
+    ("e4", "offline", "mean_util_pct", "E4: GPU utilization with and without compilation",
+     "Mean GPU utilization (%)", "e4_gpu_utilization.png", "", None),
+    ("e3", "online_open", "ttft_p50_ms", "E3: time to first token at a fixed request rate",
+     "Median time to first token (ms)", "e3_ttft_open_loop.png",
+     "Open loop: requests arrive at the stated rate whether or not earlier ones have finished.", None),
+    ("e3", "online", "ttft_p50_ms", "E3: time to first token with a fixed number of users",
+     "Median time to first token (ms)", "e3_ttft_closed_loop.png",
+     "Closed loop: each user sends its next request as soon as the last one finishes, "
+     "so a faster server is sent more requests.", None),
+    ("e3", "online", "throughput_tok_s", "E3: throughput with a fixed number of users",
+     "Generated tokens per second", "e3_throughput_closed_loop.png", "", None),
+    ("e1", "online", "throughput_tok_s", "E1: throughput under scheduler limits",
+     "Generated tokens per second", "e1_throughput_closed_loop.png",
+     "Closed loop. The control ran first and was about 5% faster than every other run, "
+     "including those whose limit never binds.", None),
+    ("e1", "online", "latency_p95_ms", "E1: p95 end-to-end latency under scheduler limits",
+     "p95 end-to-end latency (ms)", "e1_latency_closed_loop.png", "Closed loop.", None),
+    ("e1", "online", "max_gap_p95_ms", "E1: longest wait between two tokens, by token budget",
+     "p95 of each request's longest gap between tokens (ms)", "e1_token_gap_closed_loop.png",
+     "Closed loop.", ("e1_tokens_1024", "e1_control", "e1_tokens_4096", "e1_tokens_8192")),
+    ("e2", "online", "ttft_p95_ms", "E2: p95 time to first token with a fixed number of users",
+     "p95 time to first token (ms)", "e2_ttft_p95_closed_loop.png", "Closed loop.", None),
+    ("e2", "online", "ttft_p50_ms", "E2: median time to first token with a fixed number of users",
+     "Median time to first token (ms)", "e2_ttft_p50_closed_loop.png", "Closed loop.", None),
+    ("e2", "online", "max_gap_p95_ms", "E2: longest wait between two tokens",
+     "p95 of each request's longest gap between tokens (ms)", "e2_token_gap_closed_loop.png",
+     "Closed loop.", None),
+    ("e2", "online_open", "ttft_p95_ms", "E2: p95 time to first token at a fixed request rate",
+     "p95 time to first token (ms)", "e2_ttft_p95_open_loop.png",
+     "Open loop: requests arrive at the stated rate whether or not earlier ones have finished.", None),
+]
+# Experiment sweep charts, at most 4 runs each: experiment, mode, metric, title, y label, file, note, runs.
+EXPERIMENT_SWEEPS = [
+    ("e1", "online_open", "latency_p95_ms", "E1: p95 end-to-end latency by request rate",
+     "p95 latency (ms)", "e1_latency_vs_request_rate.png",
+     "Open loop: requests arrive at the stated rate whether or not earlier ones have finished.",
+     ("e1_control", "e1_seqs_016", "e1_seqs_032", "e1_seqs_064")),
+]
+WORKLOAD = {
+    "e4": "Qwen2.5-0.5B, 128 tokens in and out",
+    "e3": "Qwen2.5-0.5B, 1,024 tokens in (the first 512 shared by every prompt) and 128 out",
+    "e1": "Qwen2.5-0.5B, 128 tokens in and out",
+    "e2": "Qwen2.5-0.5B, 1,024 tokens in and 256 out",
+}
+PANEL_LABEL = {"batch_size": "Batch size {}", "concurrency": "{} concurrent users",
+               "request_rate": "{} requests per second"}
+# Run -> bar label, in the order the bars are drawn.
+RUN_LABELS = {
+    "e4_hf_control": "Hugging Face generate()",
+    "e4_hf_static": "+ static KV cache",
+    "e4_hf_compiled": "+ static KV cache, torch.compile",
+    "e4_vllm_control": "vLLM",
+    "e4_vllm_eager": "vLLM, eager mode",
+    "e3_control": "Prefix caching off",
+    "e3_prefix_cache": "Prefix caching on",
+    "e2_control": "Chunked prefill on",
+    "e2_chunked_off": "Chunked prefill off",
+    "e2_control_repeat": "Chunked prefill on, repeated last",
+    "e1_control": "Default limits",
+    "e1_seqs_016": "max_num_seqs 16",
+    "e1_seqs_032": "max_num_seqs 32",
+    "e1_seqs_064": "max_num_seqs 64",
+    "e1_seqs_128": "max_num_seqs 128",
+    "e1_tokens_1024": "max_num_batched_tokens 1,024",
+    "e1_tokens_4096": "max_num_batched_tokens 4,096",
+    "e1_tokens_8192": "max_num_batched_tokens 8,192",
+}
 
 plt.rcParams.update({
     "font.family": "DejaVu Sans",  # ships with matplotlib, so charts match on every machine
@@ -64,7 +139,7 @@ def _styles(agg, series: str) -> dict:
     names = sorted(agg[series].unique())
     if len(names) > len(SLOTS):
         raise ValueError(f"{len(names)} runs on one chart; plot at most {len(SLOTS)} or split them")
-    return {name: (name, SLOTS[i]) for i, name in enumerate(names)}
+    return {name: (RUN_LABELS.get(name, name), SLOTS[i]) for i, name in enumerate(names)}
 
 
 def _compact(value: float, _pos=None) -> str:
@@ -92,7 +167,7 @@ def sweep_chart(agg, sweep: str, metric: str, series: str, title: str, y_label: 
 
     # The header (title, subtitle, legend) is sized in inches from its contents,
     # so a longer subtitle pushes the plot down instead of running into it.
-    width = max(4.4 * len(panels) + 0.8, 6.0)
+    width = max(4.4 * len(panels) + 0.8, 6.0, 2.5 * len(shown))  # room for the legend row
     lines = [line for part in subtitle for line in textwrap.wrap(part, int(width * 11.5))]
     legend_top = 0.58 + 0.18 * len(lines)
     header = legend_top + (0.38 if has_legend else 0.08)
@@ -153,6 +228,57 @@ def sweep_chart(agg, sweep: str, metric: str, series: str, title: str, y_label: 
     plt.close(fig)
 
 
+def bar_chart(agg, sweep: str, metric: str, title: str, x_label: str, subtitle: list[str], path: Path,
+              runs: tuple[str, ...] | None = None) -> None:
+    """One horizontal bar per run, colored by backend, one panel per swept setting."""
+    runs = [r for r in (runs or RUN_LABELS) if r in set(agg["run"])]
+    settings = sorted(agg[sweep].unique())
+    backend_of = dict(zip(agg["run"], agg["backend"]))
+    shown = [BACKENDS[b] for b in BACKENDS if b in backend_of.values()]
+
+    width = 4.6 * len(settings) + 2.4
+    lines = [line for part in subtitle for line in textwrap.wrap(part, int(width * 11.5))]
+    legend_top = 0.58 + 0.18 * len(lines)
+    header = legend_top + (0.38 if len(shown) > 1 else 0.08)
+    height = 0.42 * len(runs) + 1.0 + header
+    fig, axes = plt.subplots(1, len(settings), figsize=(width, height), sharey=True, squeeze=False)
+
+    for ax, setting in zip(axes[0], settings):
+        rows = agg[agg[sweep] == setting].set_index("run").reindex(runs)
+        means, stds = rows[f"{metric}_mean"], rows[f"{metric}_std"].fillna(0)
+        ax.barh(range(len(runs)), means, height=0.62, xerr=stds, zorder=3,
+                color=[BACKENDS[backend_of[r]][1] for r in runs],
+                error_kw={"ecolor": INK_SECONDARY, "elinewidth": 1, "capsize": 0})
+        for y, (mean, std) in enumerate(zip(means, stds)):
+            ax.annotate(_value(mean), (mean + std, y), xytext=(6, 0), textcoords="offset points",
+                        va="center", fontsize=9, color=INK_SECONDARY)
+        ax.set_yticks(range(len(runs)), [RUN_LABELS[r] for r in runs], fontsize=9.5, color=INK_SECONDARY)
+        ax.set_xlim(0, means.max() * 1.18)
+        ax.xaxis.set_major_formatter(FuncFormatter(_compact))
+        ax.grid(axis="x", color=GRID, linewidth=0.8)
+        ax.set_axisbelow(True)
+        ax.tick_params(length=0)
+        for side in ("top", "right", "bottom"):
+            ax.spines[side].set_visible(False)
+        ax.spines["left"].set_color(AXIS)
+        ax.set_xlabel(x_label)
+        ax.set_title(PANEL_LABEL[sweep].format(setting), loc="left", fontsize=9.5, color=INK_SECONDARY, pad=8)
+
+    axes[0][0].invert_yaxis()  # shared axis: first run on top
+    fig.tight_layout(rect=(0, 0, 1, 1 - header / height), w_pad=3)
+    left = 0.02
+    fig.text(left, 1 - 0.2 / height, title, fontsize=13, fontweight="bold", color=INK, va="top")
+    fig.text(left, 1 - 0.54 / height, "\n".join(lines), fontsize=9, color=INK_SECONDARY,
+             va="top", linespacing=1.4)
+    if len(shown) > 1:
+        handles = [Patch(facecolor=color) for _, color in shown]
+        fig.legend(handles, [label for label, _ in shown], loc="upper left",
+                   bbox_to_anchor=(left - 0.008, 1 - legend_top / height), ncol=len(shown), frameon=False,
+                   fontsize=9, labelcolor=INK_SECONDARY, handlelength=1.2, columnspacing=1.8)
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Regenerate every chart from the committed CSVs.")
     ap.add_argument("--results-dir", default=str(REPO_ROOT / "results"))
@@ -176,6 +302,24 @@ def main() -> None:
             subtitle.append(note)
         sweep_chart(agg, SWEEP[mode], metric, series, title, y_label, X_LABEL[mode], subtitle, out / filename)
         print(f"wrote {out / filename}")
+
+    experiments = load(results_dir, experiments=True)
+    for kind, charts in (("bar", EXPERIMENT_CHARTS), ("sweep", EXPERIMENT_SWEEPS)):
+        for experiment, mode, metric, title, label, filename, note, runs in charts:
+            rows = experiments[experiments["run"].str.startswith(experiment + "_")] if not experiments.empty else experiments
+            agg = aggregate(rows, mode)
+            if agg.empty or f"{metric}_mean" not in agg:
+                print(f"skipped {filename}: no {experiment} results")
+                continue
+            subtitle = [f"{gpu}, {WORKLOAD[experiment]}. Mean across repeats; bars show ± 1 standard deviation."]
+            if note:
+                subtitle.append(note)
+            if kind == "bar":
+                bar_chart(agg, SWEEP[mode], metric, title, label, subtitle, out / filename, runs)
+            else:
+                sweep_chart(agg[agg["run"].isin(runs)], SWEEP[mode], metric, "run", title, label,
+                            X_LABEL[mode], subtitle, out / filename)
+            print(f"wrote {out / filename}")
 
 
 if __name__ == "__main__":

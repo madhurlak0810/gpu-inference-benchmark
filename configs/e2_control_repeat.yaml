@@ -1,0 +1,4 @@
+# E2 control, measured a second time after the other E2 runs. E1's control ran
+# first and came out 5% faster than every later run; comparing this with
+# e2_control shows how much of a difference is the order of the runs.
+extends: e2_control.yaml

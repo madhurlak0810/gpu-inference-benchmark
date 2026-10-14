@@ -1,0 +1,4 @@
+# E2: each prompt is prefilled in one step, however long.
+extends: e2_control.yaml
+vllm:
+  enable_chunked_prefill: false
